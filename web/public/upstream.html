@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>asio-forwarder | 上游发包</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script defer src="/common.js"></script>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="wrap">
+        <div class="brand">
+          <h1>asio-forwarder</h1>
+          <span class="tag">上游发包（调试模式）</span>
+        </div>
+        <div class="nav">
+          <a href="/index.html">大屏</a>
+          <a href="/upstream.html">上游发包</a>
+          <a href="/downstream.html">下游收包</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <div class="grid">
+        <div class="card half">
+          <h2>发送一帧</h2>
+          <div class="hint">
+            sidecar 会建立并保持一个上游 TCP 连接来发送数据，这会占用转发器的“唯一上游连接”槽位，可能踢掉真实上游。
+          </div>
+          <div style="height: 10px;"></div>
+          <div class="grid" style="grid-template-columns: repeat(12, 1fr); gap: 10px;">
+            <div style="grid-column: span 4;">
+              <div class="hint">msg_type</div>
+              <input id="msgType" type="number" value="100" />
+            </div>
+            <div style="grid-column: span 4;">
+              <div class="hint">flags</div>
+              <input id="flags" type="number" value="0" />
+            </div>
+            <div style="grid-column: span 4;">
+              <div class="hint">seq</div>
+              <input id="seq" type="number" value="1" />
+            </div>
+            <div style="grid-column: span 4;">
+              <div class="hint">body 编码</div>
+              <select id="enc">
+                <option value="utf8">utf8</option>
+                <option value="hex">hex</option>
+              </select>
+            </div>
+            <div style="grid-column: span 8;">
+              <div class="hint">body</div>
+              <input id="body" type="text" value="hello-from-web" />
+            </div>
+          </div>
+          <div style="height: 10px;"></div>
+          <div class="row">
+            <button id="btnSend">发送</button>
+            <button id="btnDisc" class="danger">断开上游连接</button>
+          </div>
+          <div style="height: 10px;"></div>
+          <div class="hint mono" id="status">-</div>
+        </div>
+
+        <div class="card half">
+          <h2>发送记录</h2>
+          <div id="log" class="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const { setActiveNav } = window.__common;
+      setActiveNav();
+
+      const logEl = document.getElementById('log');
+      const statusEl = document.getElementById('status');
+      const logs = [];
+
+      function pushLog(line) {
+        logs.unshift(line);
+        while (logs.length > 200) logs.pop();
+        logEl.textContent = logs.join('\n');
+      }
+
+      async function refreshStatus() {
+        try {
+          const r = await fetch('/api/upstream/status', { cache: 'no-store' });
+          const js = await r.json();
+          statusEl.textContent = `connected=${js.connected} connected_at_ms=${js.connected_at_ms} last_error=${js.last_error || '-'}  note=${js.note}`;
+        } catch (e) {
+          statusEl.textContent = `status fetch failed: ${String(e)}`;
+        }
+      }
+
+      document.getElementById('btnSend').addEventListener('click', async () => {
+        const msg_type = parseInt(document.getElementById('msgType').value || '100', 10);
+        const flags = parseInt(document.getElementById('flags').value || '0', 10);
+        const seq = parseInt(document.getElementById('seq').value || '1', 10);
+        const body_encoding = document.getElementById('enc').value;
+        const body = document.getElementById('body').value || '';
+
+        try {
+          const r = await fetch('/api/upstream/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ msg_type, flags, seq, body_encoding, body }),
+          });
+          const js = await r.json();
+          const ok = !!js.ok;
+          pushLog(`${new Date().toLocaleTimeString()} ok=${ok} type=${msg_type} flags=${flags} seq=${seq} len=${body.length} enc=${body_encoding} ${js.error ? ' err=' + js.error : ''}`);
+          if (!ok && js.detail) pushLog(`  detail: ${js.detail}`);
+          if (js.warning) pushLog(`  warning: ${js.warning}`);
+        } catch (e) {
+          pushLog(`${new Date().toLocaleTimeString()} send failed: ${String(e)}`);
+        } finally {
+          refreshStatus();
+        }
+      });
+
+      document.getElementById('btnDisc').addEventListener('click', async () => {
+        try {
+          await fetch('/api/upstream/disconnect', { method: 'POST' });
+          pushLog(`${new Date().toLocaleTimeString()} upstream disconnected`);
+        } catch (e) {
+          pushLog(`${new Date().toLocaleTimeString()} disconnect failed: ${String(e)}`);
+        } finally {
+          refreshStatus();
+        }
+      });
+
+      refreshStatus();
+      setInterval(refreshStatus, 1500);
+    </script>
+  </body>
+</html>
+

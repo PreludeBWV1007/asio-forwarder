@@ -5,6 +5,10 @@
   "downstream": {
     "listen": { "host": "0.0.0.0", "port": 19002, "backlog": 1024 }
   },
+  "admin": {
+    "listen": { "host": "127.0.0.1", "port": 19003, "backlog": 128 },
+    "events_max": 200
+  },
   "threads": { "io": 2, "biz": 2 },
   "timeouts": { "read_ms": 15000, "idle_ms": 60000 },
   "limits": { "max_body_len": 4194304 },

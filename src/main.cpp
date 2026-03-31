@@ -4,6 +4,8 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
@@ -29,6 +31,8 @@ using boost::asio::co_spawn;
 using boost::asio::detached;
 using boost::asio::ip::tcp;
 using boost::asio::use_awaitable;
+namespace beast = boost::beast;
+namespace http = beast::http;
 
 namespace fwd {
 
@@ -60,6 +64,11 @@ Config load_config_or_throw(const std::string& path) {
       as_u16(pt.get<int>("downstream.listen.port", cfg.downstream_listen.port), "downstream.listen.port");
   cfg.downstream_listen.backlog = pt.get<int>("downstream.listen.backlog", cfg.downstream_listen.backlog);
 
+  cfg.admin.listen.host = pt.get<std::string>("admin.listen.host", cfg.admin.listen.host);
+  cfg.admin.listen.port = as_u16(pt.get<int>("admin.listen.port", cfg.admin.listen.port), "admin.listen.port");
+  cfg.admin.listen.backlog = pt.get<int>("admin.listen.backlog", cfg.admin.listen.backlog);
+  cfg.admin.events_max = pt.get<int>("admin.events_max", cfg.admin.events_max);
+
   cfg.io_threads = pt.get<int>("threads.io", cfg.io_threads);
   cfg.biz_threads = pt.get<int>("threads.biz", cfg.biz_threads);
 
@@ -76,6 +85,7 @@ Config load_config_or_throw(const std::string& path) {
 
   if (cfg.io_threads < 1 || cfg.io_threads > 64) throw std::runtime_error("invalid threads.io");
   if (cfg.biz_threads < 1 || cfg.biz_threads > 64) throw std::runtime_error("invalid threads.biz");
+  if (cfg.admin.events_max < 0 || cfg.admin.events_max > 10000) throw std::runtime_error("invalid admin.events_max");
   if (cfg.limits.max_body_len == 0 || cfg.limits.max_body_len > 64u * 1024u * 1024u) throw std::runtime_error("invalid limits.max_body_len");
   if (cfg.flow.high_water_bytes == 0 || cfg.flow.hard_limit_bytes < cfg.flow.high_water_bytes) throw std::runtime_error("invalid flow thresholds");
   if (!(cfg.flow.on_high_water == "drop" || cfg.flow.on_high_water == "disconnect")) throw std::runtime_error("invalid flow.send_queue.on_high_water");
@@ -94,6 +104,12 @@ struct Metrics {
   std::atomic<std::uint64_t> frames_out{0};
   std::atomic<std::uint64_t> bytes_out{0};
   std::atomic<std::uint64_t> drops{0};
+};
+
+struct AdminEvent {
+  std::uint64_t ts_ms{0};
+  const char* level{"INFO"};
+  std::string msg;
 };
 
 class DownstreamSession : public std::enable_shared_from_this<DownstreamSession> {
@@ -219,22 +235,172 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
         cfg_(std::move(cfg)),
         upstream_acceptor_(io_),
         downstream_acceptor_(io_),
+        admin_acceptor_(io_),
         metrics_timer_(io_) {}
 
   void start() {
     open_listen(upstream_acceptor_, cfg_.upstream_listen, "upstream");
     open_listen(downstream_acceptor_, cfg_.downstream_listen, "downstream");
+    open_listen(admin_acceptor_, cfg_.admin.listen, "admin");
 
     accept_upstream();
     accept_downstream();
+    accept_admin();
     tick_metrics();
 
     fwd::log::write(fwd::log::Level::kInfo,
                     "started: upstream=" + cfg_.upstream_listen.host + ":" + std::to_string(cfg_.upstream_listen.port) +
-                        " downstream=" + cfg_.downstream_listen.host + ":" + std::to_string(cfg_.downstream_listen.port));
+                        " downstream=" + cfg_.downstream_listen.host + ":" + std::to_string(cfg_.downstream_listen.port) +
+                        " admin=" + cfg_.admin.listen.host + ":" + std::to_string(cfg_.admin.listen.port));
   }
 
  private:
+  static std::uint64_t now_ms() {
+    using namespace std::chrono;
+    return static_cast<std::uint64_t>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
+  }
+
+  static const char* level_name(fwd::log::Level lv) {
+    switch (lv) {
+      case fwd::log::Level::kInfo:
+        return "INFO";
+      case fwd::log::Level::kWarn:
+        return "WARN";
+      case fwd::log::Level::kError:
+        return "ERROR";
+      case fwd::log::Level::kDebug:
+        return "DEBUG";
+    }
+    return "INFO";
+  }
+
+  void push_event(fwd::log::Level lv, std::string msg) {
+    if (cfg_.admin.events_max <= 0) return;
+    AdminEvent ev;
+    ev.ts_ms = now_ms();
+    ev.level = level_name(lv);
+    ev.msg = std::move(msg);
+    std::lock_guard lk(events_mu_);
+    events_.push_back(std::move(ev));
+    while (static_cast<int>(events_.size()) > cfg_.admin.events_max) events_.pop_front();
+  }
+
+  struct StatsSnapshot {
+    std::uint64_t ts_ms{0};
+    std::uint64_t started_ms{0};
+    bool upstream_connected{false};
+    std::uint64_t upstream_connects{0};
+    std::uint64_t downstream_connects{0};
+    std::size_t downstream_alive{0};
+    std::size_t downstream_pending_bytes{0};
+    std::uint64_t frames_in{0};
+    std::uint64_t bytes_in{0};
+    std::uint64_t frames_out{0};
+    std::uint64_t bytes_out{0};
+    std::uint64_t drops{0};
+  };
+
+  StatsSnapshot snapshot_stats() {
+    StatsSnapshot s;
+    s.ts_ms = now_ms();
+    s.started_ms = started_ms_;
+    s.upstream_connects = metrics_.upstream_connects.load(std::memory_order_relaxed);
+    s.downstream_connects = metrics_.downstream_connects.load(std::memory_order_relaxed);
+    s.frames_in = metrics_.frames_in.load(std::memory_order_relaxed);
+    s.bytes_in = metrics_.bytes_in.load(std::memory_order_relaxed);
+    s.frames_out = metrics_.frames_out.load(std::memory_order_relaxed);
+    s.bytes_out = metrics_.bytes_out.load(std::memory_order_relaxed);
+    s.drops = metrics_.drops.load(std::memory_order_relaxed);
+    s.upstream_connected = (upstream_ && upstream_->is_open());
+
+    {
+      std::lock_guard lk(down_mu_);
+      std::size_t write_idx = 0;
+      for (std::size_t i = 0; i < down_.size(); ++i) {
+        auto& d = down_[i];
+        if (d && d->is_open()) {
+          ++s.downstream_alive;
+          s.downstream_pending_bytes += d->pending_bytes();
+          down_[write_idx++] = d;
+        }
+      }
+      down_.resize(write_idx);
+    }
+    return s;
+  }
+
+  static std::string json_escape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (char c : in) {
+      switch (c) {
+        case '\"':
+          out += "\\\"";
+          break;
+        case '\\':
+          out += "\\\\";
+          break;
+        case '\n':
+          out += "\\n";
+          break;
+        case '\r':
+          out += "\\r";
+          break;
+        case '\t':
+          out += "\\t";
+          break;
+        default:
+          if (static_cast<unsigned char>(c) < 0x20) out += '?';
+          else out += c;
+      }
+    }
+    return out;
+  }
+
+  std::string build_stats_json() {
+    const auto s = snapshot_stats();
+    std::string j;
+    j.reserve(512);
+    j += "{";
+    j += "\"ts_ms\":" + std::to_string(s.ts_ms) + ",";
+    j += "\"started_ms\":" + std::to_string(s.started_ms) + ",";
+    j += "\"upstream_connected\":" + std::string(s.upstream_connected ? "true" : "false") + ",";
+    j += "\"upstream_connects\":" + std::to_string(s.upstream_connects) + ",";
+    j += "\"downstream_connects\":" + std::to_string(s.downstream_connects) + ",";
+    j += "\"downstream_alive\":" + std::to_string(s.downstream_alive) + ",";
+    j += "\"downstream_pending_bytes\":" + std::to_string(s.downstream_pending_bytes) + ",";
+    j += "\"frames_in\":" + std::to_string(s.frames_in) + ",";
+    j += "\"bytes_in\":" + std::to_string(s.bytes_in) + ",";
+    j += "\"frames_out\":" + std::to_string(s.frames_out) + ",";
+    j += "\"bytes_out\":" + std::to_string(s.bytes_out) + ",";
+    j += "\"drops\":" + std::to_string(s.drops);
+    j += "}";
+    return j;
+  }
+
+  std::string build_events_json() {
+    std::deque<AdminEvent> copy;
+    {
+      std::lock_guard lk(events_mu_);
+      copy = events_;
+    }
+    std::string j;
+    j.reserve(1024);
+    j += "{\"events\":[";
+    bool first = true;
+    for (const auto& e : copy) {
+      if (!first) j += ",";
+      first = false;
+      j += "{";
+      j += "\"ts_ms\":" + std::to_string(e.ts_ms) + ",";
+      j += "\"level\":\"" + std::string(e.level) + "\",";
+      j += "\"msg\":\"" + json_escape(e.msg) + "\"";
+      j += "}";
+    }
+    j += "]}";
+    return j;
+  }
+
   awaitable<std::size_t> read_exact_with_timeout(tcp::socket& sock, const boost::asio::mutable_buffer& buf,
                                                 std::chrono::milliseconds timeout, boost::system::error_code& ec) {
     auto ex = co_await boost::asio::this_coro::executor;
@@ -282,6 +448,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
     upstream_acceptor_.async_accept([self = shared_from_this()](boost::system::error_code ec, tcp::socket sock) {
       if (ec) {
         fwd::log::write(fwd::log::Level::kError, "accept upstream error: " + ec.message());
+        self->push_event(fwd::log::Level::kError, "accept upstream error: " + ec.message());
         self->accept_upstream();
         return;
       }
@@ -289,6 +456,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
 
       if (self->upstream_) {
         fwd::log::write(fwd::log::Level::kWarn, "new upstream connected, closing previous upstream");
+        self->push_event(fwd::log::Level::kWarn, "new upstream connected, closing previous upstream");
         boost::system::error_code ec2;
         self->upstream_->cancel(ec2);
         self->upstream_->close(ec2);
@@ -296,6 +464,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
       }
       self->upstream_ = std::make_shared<tcp::socket>(std::move(sock));
       fwd::log::write(fwd::log::Level::kInfo, "upstream connected");
+      self->push_event(fwd::log::Level::kInfo, "upstream connected");
 
       self->start_upstream_readloop();
       self->accept_upstream();
@@ -306,6 +475,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
     downstream_acceptor_.async_accept([self = shared_from_this()](boost::system::error_code ec, tcp::socket sock) {
       if (ec) {
         fwd::log::write(fwd::log::Level::kError, "accept downstream error: " + ec.message());
+        self->push_event(fwd::log::Level::kError, "accept downstream error: " + ec.message());
         self->accept_downstream();
         return;
       }
@@ -316,8 +486,63 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
         self->down_.push_back(s);
       }
       s->start();
+      self->push_event(fwd::log::Level::kInfo, "downstream connected");
       self->accept_downstream();
     });
+  }
+
+  void accept_admin() {
+    admin_acceptor_.async_accept([self = shared_from_this()](boost::system::error_code ec, tcp::socket sock) {
+      if (ec) {
+        fwd::log::write(fwd::log::Level::kError, "accept admin error: " + ec.message());
+        self->push_event(fwd::log::Level::kError, "accept admin error: " + ec.message());
+        self->accept_admin();
+        return;
+      }
+      co_spawn(self->io_, [self, s = std::move(sock)]() mutable -> awaitable<void> { co_await self->handle_admin(std::move(s)); },
+               detached);
+      self->accept_admin();
+    });
+  }
+
+  awaitable<void> handle_admin(tcp::socket sock) {
+    beast::flat_buffer buffer;
+    beast::tcp_stream stream(std::move(sock));
+    stream.expires_after(std::chrono::seconds(10));
+
+    boost::system::error_code ec;
+    http::request<http::string_body> req;
+    co_await http::async_read(stream, buffer, req, boost::asio::redirect_error(use_awaitable, ec));
+    if (ec) co_return;
+
+    http::response<http::string_body> res;
+    res.version(req.version());
+    res.keep_alive(false);
+    res.set(http::field::server, "asio-forwarder-admin");
+    res.set(http::field::content_type, "application/json; charset=utf-8");
+
+    const std::string target = std::string(req.target());
+    if (req.method() != http::verb::get) {
+      res.result(http::status::method_not_allowed);
+      res.body() = "{\"error\":\"method_not_allowed\"}";
+    } else if (target == "/api/health" || target == "/health") {
+      res.result(http::status::ok);
+      res.body() = "{\"ok\":true}";
+    } else if (target == "/api/stats") {
+      res.result(http::status::ok);
+      res.body() = build_stats_json();
+    } else if (target == "/api/events") {
+      res.result(http::status::ok);
+      res.body() = build_events_json();
+    } else {
+      res.result(http::status::not_found);
+      res.body() = "{\"error\":\"not_found\"}";
+    }
+    res.prepare_payload();
+
+    co_await http::async_write(stream, res, boost::asio::redirect_error(use_awaitable, ec));
+    stream.socket().shutdown(tcp::socket::shutdown_send, ec);
+    co_return;
   }
 
   void start_upstream_readloop() {
@@ -337,6 +562,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
         if (now - last_activity > std::chrono::milliseconds(cfg_.timeouts.idle_ms)) {
           ec = boost::asio::error::timed_out;
           fwd::log::write(fwd::log::Level::kWarn, "upstream idle timeout, closing");
+          push_event(fwd::log::Level::kWarn, "upstream idle timeout, closing");
           break;
         }
       }
@@ -354,11 +580,13 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
       const auto h = proto::Header::unpack_le(hb.data());
       if (h.magic != proto::Header::kMagic || h.version != proto::Header::kVersion || h.header_len != proto::Header::kHeaderLen) {
         fwd::log::write(fwd::log::Level::kError, "protocol header invalid, closing upstream: " + h.to_string());
+        push_event(fwd::log::Level::kError, "protocol header invalid, closing upstream: " + h.to_string());
         ec = boost::asio::error::invalid_argument;
         break;
       }
       if (h.body_len > cfg_.limits.max_body_len) {
         fwd::log::write(fwd::log::Level::kError, "body too large, closing upstream: " + h.to_string());
+        push_event(fwd::log::Level::kError, "body too large, closing upstream: " + h.to_string());
         ec = boost::asio::error::message_size;
         break;
       }
@@ -389,6 +617,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
     }
 
     fwd::log::write(fwd::log::Level::kWarn, std::string("upstream read loop exit: ") + ec.message());
+    push_event(fwd::log::Level::kWarn, std::string("upstream read loop exit: ") + ec.message());
     if (upstream_ == sock) {
       boost::system::error_code ec2;
       sock->cancel(ec2);
@@ -429,32 +658,18 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
   }
 
   void report_metrics() {
-    std::size_t down_count = 0;
-    std::size_t down_pending = 0;
-    {
-      std::lock_guard lk(down_mu_);
-      std::size_t write_idx = 0;
-      for (std::size_t i = 0; i < down_.size(); ++i) {
-        auto& s = down_[i];
-        if (s && s->is_open()) {
-          ++down_count;
-          down_pending += s->pending_bytes();
-          down_[write_idx++] = s;
-        }
-      }
-      down_.resize(write_idx);
-    }
+    const auto s = snapshot_stats();
 
     fwd::log::write(fwd::log::Level::kInfo,
                     "metrics: up_conn=" + std::to_string(metrics_.upstream_connects.load()) +
                         " down_conn=" + std::to_string(metrics_.downstream_connects.load()) +
-                        " down_alive=" + std::to_string(down_count) +
+                        " down_alive=" + std::to_string(s.downstream_alive) +
                         " frames_in=" + std::to_string(metrics_.frames_in.load()) +
                         " bytes_in=" + std::to_string(metrics_.bytes_in.load()) +
                         " frames_out=" + std::to_string(metrics_.frames_out.load()) +
                         " bytes_out=" + std::to_string(metrics_.bytes_out.load()) +
                         " drops=" + std::to_string(metrics_.drops.load()) +
-                        " down_pending_bytes=" + std::to_string(down_pending));
+                        " down_pending_bytes=" + std::to_string(s.downstream_pending_bytes));
   }
 
   boost::asio::io_context& io_;
@@ -462,6 +677,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
 
   tcp::acceptor upstream_acceptor_;
   tcp::acceptor downstream_acceptor_;
+  tcp::acceptor admin_acceptor_;
 
   std::shared_ptr<tcp::socket> upstream_;
 
@@ -471,6 +687,10 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
 
   Metrics metrics_{};
   boost::asio::steady_timer metrics_timer_;
+
+  const std::uint64_t started_ms_{now_ms()};
+  std::mutex events_mu_;
+  std::deque<AdminEvent> events_;
 };
 
 }  // namespace fwd

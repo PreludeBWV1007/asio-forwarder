@@ -12,6 +12,11 @@ struct Config {
     int backlog = 1024;
   };
 
+  struct Admin {
+    Listen listen{.host = "127.0.0.1", .port = 19003, .backlog = 128};
+    int events_max = 200;
+  };
+
   struct Timeouts {
     int read_ms = 15000;
     int idle_ms = 60000;
@@ -33,6 +38,7 @@ struct Config {
 
   Listen upstream_listen{.port = 9001};
   Listen downstream_listen{.port = 9002};
+  Admin admin{};
   Timeouts timeouts{};
   Limits limits{};
   FlowControl flow{};

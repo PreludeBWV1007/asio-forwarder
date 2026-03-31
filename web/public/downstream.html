@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>asio-forwarder | 下游收包</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script defer src="/common.js"></script>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="wrap">
+        <div class="brand">
+          <h1>asio-forwarder</h1>
+          <span class="tag">下游收包（SSE）</span>
+        </div>
+        <div class="nav">
+          <a href="/index.html">大屏</a>
+          <a href="/upstream.html">上游发包</a>
+          <a href="/downstream.html">下游收包</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <div class="grid">
+        <div class="card wide">
+          <h2>过滤与显示</h2>
+          <div class="grid" style="grid-template-columns: repeat(12, 1fr); gap: 10px;">
+            <div style="grid-column: span 3;">
+              <div class="hint">msg_type（可空）</div>
+              <input id="fType" placeholder="例如 100" />
+            </div>
+            <div style="grid-column: span 3;">
+              <div class="hint">seq（可空）</div>
+              <input id="fSeq" placeholder="例如 1" />
+            </div>
+            <div style="grid-column: span 3;">
+              <div class="hint">body 预览</div>
+              <select id="mode">
+                <option value="utf8">utf8</option>
+                <option value="hex">hex</option>
+              </select>
+            </div>
+            <div style="grid-column: span 3;">
+              <div class="hint">最大行数</div>
+              <input id="maxRows" type="number" value="200" />
+            </div>
+          </div>
+          <div style="height: 10px;"></div>
+          <div class="row">
+            <button id="btnClear" class="secondary">清空</button>
+            <span class="pill mono" id="meta">connecting…</span>
+          </div>
+        </div>
+
+        <div class="card wide" style="padding: 0;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 110px;">time</th>
+                <th style="width: 70px;">type</th>
+                <th style="width: 70px;">flags</th>
+                <th style="width: 70px;">seq</th>
+                <th style="width: 90px;">body_len</th>
+                <th>body_preview</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const { setActiveNav, b64ToBytes, bytesToHex, bytesToUtf8 } = window.__common;
+      setActiveNav();
+
+      const tbody = document.getElementById('tbody');
+      const meta = document.getElementById('meta');
+      const rows = [];
+
+      function getFilters() {
+        const t = document.getElementById('fType').value.trim();
+        const s = document.getElementById('fSeq').value.trim();
+        return {
+          type: t ? parseInt(t, 10) : null,
+          seq: s ? parseInt(s, 10) : null
+        };
+      }
+
+      function render() {
+        const { type, seq } = getFilters();
+        const mode = document.getElementById('mode').value;
+        const maxRows = Math.max(20, Math.min(2000, parseInt(document.getElementById('maxRows').value || '200', 10)));
+
+        const filtered = rows.filter(r => {
+          if (type != null && r.header.msg_type !== type) return false;
+          if (seq != null && r.header.seq !== seq) return false;
+          return true;
+        }).slice(-maxRows).reverse();
+
+        tbody.innerHTML = filtered.map(r => {
+          const ts = new Date(r.ts_ms).toLocaleTimeString();
+          const bytes = r.body_b64 ? b64ToBytes(r.body_b64) : new Uint8Array(0);
+          const prev = mode === 'hex' ? bytesToHex(bytes, 64) : bytesToUtf8(bytes, 64);
+          return `<tr>
+            <td class="small">${ts}</td>
+            <td>${r.header.msg_type}</td>
+            <td>${r.header.flags}</td>
+            <td>${r.header.seq}</td>
+            <td>${r.body_len}</td>
+            <td title="base64=${r.body_b64 || ''}">${prev.replace(/</g,'&lt;')}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      document.getElementById('btnClear').addEventListener('click', () => {
+        rows.length = 0;
+        render();
+      });
+      document.getElementById('fType').addEventListener('input', render);
+      document.getElementById('fSeq').addEventListener('input', render);
+      document.getElementById('mode').addEventListener('change', render);
+      document.getElementById('maxRows').addEventListener('change', render);
+
+      function connect() {
+        const es = new EventSource('/api/downstream/stream');
+        meta.textContent = 'connecting…';
+
+        es.addEventListener('hello', (ev) => {
+          meta.textContent = 'connected';
+        });
+        es.addEventListener('ping', (ev) => {
+          // keepalive
+        });
+        es.addEventListener('frame', (ev) => {
+          try {
+            const f = JSON.parse(ev.data);
+            rows.push(f);
+            while (rows.length > 5000) rows.shift();
+            meta.textContent = `connected | frames=${rows.length}`;
+            render();
+          } catch (e) {
+            meta.textContent = `parse failed: ${String(e)}`;
+          }
+        });
+        es.onerror = () => {
+          meta.textContent = 'disconnected, retry…';
+          es.close();
+          setTimeout(connect, 1000);
+        };
+      }
+
+      connect();
+    </script>
+  </body>
+</html>
+

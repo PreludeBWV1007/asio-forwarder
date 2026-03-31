@@ -32,6 +32,56 @@ cd /home/xuanrui/asio-forwarder
 
 - upstream listen：`0.0.0.0:19001`
 - downstream listen：`0.0.0.0:19002`
+- admin（只读 HTTP）:`127.0.0.1:19003`
+
+## Web 监控大屏与网页收发入口（sidecar）
+
+项目自带一个独立的 Web sidecar（Node.js），用于：
+
+- **监控大屏**：连接数、吞吐、drops、下游待发送队列总量、事件流
+- **上游发包页**：在网页里按协议字段发送一帧
+- **下游收包页**：通过 SSE 实时展示下游收到的帧（header + body 预览）
+
+### 启动转发器（包含 admin 端口）
+
+```bash
+cd /home/xuanrui/asio-forwarder
+./scripts/build.sh
+./scripts/run_dev.sh
+```
+
+admin 默认只监听本机：`http://127.0.0.1:19003/api/stats`、`/api/events`
+
+### 启动 Web sidecar
+
+```bash
+cd /home/xuanrui/asio-forwarder
+./scripts/run_web.sh
+```
+
+默认端口：`http://127.0.0.1:8080`
+
+### 打开页面
+
+- 大屏：`http://127.0.0.1:8080/index.html`
+- 上游发包：`http://127.0.0.1:8080/upstream.html`
+- 下游收包：`http://127.0.0.1:8080/downstream.html`
+
+### 重要提示（上游单连接）
+
+转发器 **只允许 1 条上游连接**。Web sidecar 的“上游发包”为了能连续发送，会建立并保持一个上游 TCP 连接，这会占用该槽位，可能踢掉真实上游连接（调试模式下使用）。
+
+### 环境变量（自定义端口）
+
+如果你改了 `configs/dev/forwarder.json` 端口，可以用环境变量让 sidecar 连接到对应端口：
+
+```bash
+WEB_PORT=8080 \
+FWD_UP_HOST=127.0.0.1 FWD_UP_PORT=19001 \
+FWD_DOWN_HOST=127.0.0.1 FWD_DOWN_PORT=19002 \
+FWD_ADMIN_HOST=127.0.0.1 FWD_ADMIN_PORT=19003 \
+./scripts/run_web.sh
+```
 
 ## 协议（简版）
 
