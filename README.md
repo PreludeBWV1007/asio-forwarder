@@ -143,6 +143,7 @@ FWD_ADMIN_HOST=127.0.0.1 FWD_ADMIN_PORT=19003 \
 
 - `src/main.cpp`：核心逻辑（配置加载、上游读帧、广播、下游背压、admin/stats/events）
 - `include/fwd/protocol.hpp`：协议 Header/Frame 定义（pack/unpack）
+- `docs/design.md`：核心设计结构（分层/数据流/关键约束/可观测性/扩展点）
 - `web/server.js`：Web sidecar（大屏 + 网页发包/收包 + SSE）
 - `web/public/*.html`：前端页面（大屏/发包/下游连接池/连接详情）
 - `tools/*.py`：纯终端自测工具（发包/收包）
