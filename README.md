@@ -6,6 +6,38 @@
 - **下游（多条连接）**：对每个下游连接 **原样广播** 转发
 - **稳定性优先**：协议校验、最大包长限制、读/空闲超时、下游发送队列硬阈值保护、基础 metrics 日志
 
+## 3 分钟跑通（推荐路径）
+
+### 1) 编译 + 启动转发器
+
+```bash
+cd /home/xuanrui/asio-forwarder
+./scripts/build.sh
+./scripts/run_dev.sh
+```
+
+默认配置 `configs/dev/forwarder.json`（文件内带 `_comment` 说明字段）：
+
+- upstream listen：`0.0.0.0:19001`（**仅 1 条上游连接槽位**）
+- downstream listen：`0.0.0.0:19002`（可 accept 多条下游连接）
+- admin（只读 HTTP）:`127.0.0.1:19003`（`/api/stats`、`/api/events`）
+
+### 2) 终端自测（不依赖 Web）
+
+终端 A：连下游收包（会阻塞等待）
+
+```bash
+python3 tools/downstream_recv.py --host 127.0.0.1 --port 19002
+```
+
+终端 B：模拟上游发一帧
+
+```bash
+python3 tools/upstream_send.py --host 127.0.0.1 --port 19001 --type 100 --seq 1 --text "你好，hello-binary"
+```
+
+你会看到下游打印收到的 header 字段与 body 预览。
+
 ## 快速开始
 
 ### 依赖
@@ -28,12 +60,6 @@ cd /home/xuanrui/asio-forwarder
 ./scripts/run_dev.sh
 ```
 
-默认使用 `configs/dev/forwarder.json`：
-
-- upstream listen：`0.0.0.0:19001`
-- downstream listen：`0.0.0.0:19002`
-- admin（只读 HTTP）:`127.0.0.1:19003`
-
 ## Web 监控大屏与网页收发入口（sidecar）
 
 项目自带一个独立的 Web sidecar（Node.js），用于：
@@ -41,6 +67,7 @@ cd /home/xuanrui/asio-forwarder
 - **监控大屏**：连接数、吞吐、drops、下游待发送队列总量、事件流
 - **上游发包页**：在网页里按协议字段发送一帧
 - **下游收包页**：通过 SSE 实时展示下游收到的帧（header + body 预览）
+  - body 预览：utf8/hex 两种模式；utf8 模式 **最多展示 4KB** 且做 **UTF-8 边界安全截断**，避免中文乱码
 
 ### 启动转发器（包含 admin 端口）
 
@@ -67,6 +94,13 @@ cd /home/xuanrui/asio-forwarder
 - 上游发包：`http://127.0.0.1:8080/upstream.html`
 - 下游收包：`http://127.0.0.1:8080/downstream.html`
 
+### 下游连接池（sidecar 的“模拟下游”）
+
+`/downstream.html` 页面管理的是 **sidecar 主动创建的下游 TCP 客户端连接**（用于模拟多个下游消费端）。
+
+- 默认连接数：1
+- 最大连接数：200（sidecar 内置上限）
+
 ### 重要提示（上游单连接）
 
 转发器 **只允许 1 条上游连接**。Web sidecar 的“上游发包”为了能连续发送，会建立并保持一个上游 TCP 连接，这会占用该槽位，可能踢掉真实上游连接（调试模式下使用）。
@@ -90,31 +124,6 @@ FWD_ADMIN_HOST=127.0.0.1 FWD_ADMIN_PORT=19003 \
 - 固定 24 字节 Header（小端） + Body
 - 通过 `body_len` 处理粘包/半包（读满头，再读满 body）
 
-## 自测（无需其他系统）
-
-开 2 个终端：
-
-### 终端 A：启动转发器
-
-```bash
-cd /home/xuanrui/asio-forwarder
-./scripts/run_dev.sh
-```
-
-### 终端 B：先连下游收包（会阻塞等待）
-
-```bash
-python3 tools/downstream_recv.py --host 127.0.0.1 --port 19002
-```
-
-### 终端 C：模拟上游发一帧
-
-```bash
-python3 tools/upstream_send.py --host 127.0.0.1 --port 19001 --type 100 --seq 1 --text "hello-binary"
-```
-
-你会看到下游打印收到的 header 字段与 body。
-
 ## 行为说明（简单版的稳定性策略）
 
 - **上游连接**：
@@ -129,6 +138,15 @@ python3 tools/upstream_send.py --host 127.0.0.1 --port 19001 --type 100 --seq 1 
 
 - **metrics 输出**：
   - 周期由 `metrics.interval_ms` 控制（默认 5000ms）。
+
+## 代码入口速览（从哪里开始看）
+
+- `src/main.cpp`：核心逻辑（配置加载、上游读帧、广播、下游背压、admin/stats/events）
+- `include/fwd/protocol.hpp`：协议 Header/Frame 定义（pack/unpack）
+- `web/server.js`：Web sidecar（大屏 + 网页发包/收包 + SSE）
+- `web/public/*.html`：前端页面（大屏/发包/下游连接池/连接详情）
+- `tools/*.py`：纯终端自测工具（发包/收包）
+- `scripts/*.sh`：构建与启动脚本
 
 ## 常见问题
 

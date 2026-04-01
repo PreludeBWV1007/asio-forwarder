@@ -8,6 +8,17 @@
     <script defer src="/common.js"></script>
   </head>
   <body>
+    <!--
+      本页面结构（下游管理 / 连接池）：
+      - 这里的“下游连接”指：sidecar 主动创建的下游 TCP 客户端连接（连接到转发器 downstream 端口）
+      - 作用：
+        - 新增/删除 sidecar 下游连接，用于模拟多个下游消费端
+        - 查看每条连接的接收概况与详情入口（downstream_conn.html）
+      - 数据接口：
+        - GET /api/downstream/status
+        - POST /api/downstream/add
+        - POST /api/downstream/remove
+    -->
     <div class="topbar">
       <div class="wrap">
         <div class="brand">

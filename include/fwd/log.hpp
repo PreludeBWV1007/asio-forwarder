@@ -1,5 +1,10 @@
 #pragma once
 
+// 本文件职责（最小日志工具）：
+// - 提供线程安全的 stderr 日志输出：时间戳 + level + message
+// - 作为项目“最小可用骨架”的日志实现，避免引入额外依赖
+// 说明：这是基础工具，后续如需更强能力（异步/滚动/结构化）可替换。
+
 #include <chrono>
 #include <ctime>
 #include <iomanip>
@@ -49,5 +54,5 @@ inline void write(Level lv, const std::string& msg) {
   std::cerr << now_local() << " [" << level_name(lv) << "] " << msg << "\n";
 }
 
-}  // namespace fwd::log
+}  // 命名空间 fwd::log
 

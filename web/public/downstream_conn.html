@@ -84,7 +84,7 @@
       window.addEventListener('DOMContentLoaded', () => {
         const c = window.__common;
         if (!c) throw new Error('common.js not loaded');
-        const { b64ToBytes, bytesToHex, bytesToUtf8 } = c;
+        const { b64ToBytes, bytesToHex, bytesToUtf8Safe } = c;
         c.setActiveNav();
 
         const params = new URLSearchParams(location.search);
@@ -120,7 +120,9 @@
           tbody.innerHTML = filtered.map(r => {
             const ts = new Date(r.ts_ms).toLocaleTimeString();
             const bytes = r.body_b64 ? b64ToBytes(r.body_b64) : new Uint8Array(0);
-            const prev = mode === 'hex' ? bytesToHex(bytes, 64) : bytesToUtf8(bytes, 64);
+            // 最多展示 4KB，兼顾“可读性”和页面性能。
+            // 采用 UTF-8 边界安全截断，避免中英文等多字节字符在截断处出现乱码。
+            const prev = mode === 'hex' ? bytesToHex(bytes, 4096) : bytesToUtf8Safe(bytes, 4096);
             return `<tr>
               <td class="small">${ts}</td>
               <td>${r.header.msg_type}</td>

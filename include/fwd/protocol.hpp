@@ -1,5 +1,11 @@
 #pragma once
 
+// 本文件职责（协议定义）：
+// - 定义 wire 格式的 Header（固定 24 字节，小端）
+// - 提供 pack_le()/unpack_le()：在“结构体字段”与“线上的字节序列”之间转换
+// - 提供 Frame（header+body）数据结构：body 为原始二进制载荷（可含 '\0'）
+// 关联文档：`docs/protocol.md`
+
 #include <array>
 #include <cstdint>
 #include <string>
@@ -9,7 +15,7 @@
 namespace fwd::proto {
 
 // 固定小端头部：24 bytes
-// magic(4) | version(2) | header_len(2) | body_len(4) | msg_type(4) | flags(4) | seq(4)
+// 字段布局：magic(4) | version(2) | header_len(2) | body_len(4) | msg_type(4) | flags(4) | seq(4)
 struct Header {
   static constexpr std::uint32_t kMagic = 0x44574641;  // 'A''F''W''D' little-endian display
   static constexpr std::uint16_t kVersion = 1;
@@ -57,5 +63,5 @@ struct Frame {
   std::string body;  // 二进制载荷（可含 '\0'）
 };
 
-}  // namespace fwd::proto
+}  // 命名空间 fwd::proto
 

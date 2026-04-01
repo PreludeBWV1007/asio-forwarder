@@ -8,6 +8,14 @@
     <script defer src="/common.js"></script>
   </head>
   <body>
+    <!--
+      本页面结构（上游发包 / 调试模式）：
+      - 作用：通过 sidecar 调用 /api/upstream/send，向转发器 upstream 端口写入一帧数据
+      - 注意：sidecar 会维持一条到 upstream 的 TCP 连接，会占用转发器“唯一上游连接槽位”
+      - body 编码：
+        - utf8：将输入字符串按 UTF-8 编码为 bytes
+        - hex：将输入视为十六进制字符串（可含空格），按 bytes 发送
+    -->
     <div class="topbar">
       <div class="wrap">
         <div class="brand">

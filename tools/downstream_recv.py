@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""
+本文件职责（下游收包自测工具）：
+- 连接转发器 downstream 端口，循环接收并打印帧信息（按 Header(24)+Body 解析）
+- body 仅做前 64 字节预览（bytes），用于快速确认是否收到广播数据
+
+常用示例：
+  python3 tools/downstream_recv.py --host 127.0.0.1 --port 19002
+"""
 import argparse
 import socket
 import struct

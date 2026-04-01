@@ -1,4 +1,19 @@
 /* eslint-disable no-console */
+/*
+本文件结构（Web sidecar，负责“监控大屏 + 网页发包/收包”）：
+- 环境变量与端口：
+  - WEB_HOST/WEB_PORT：sidecar HTTP 监听
+  - FWD_UP_* / FWD_DOWN_* / FWD_ADMIN_*：转发器 upstream/downstream/admin 目标地址
+- upstream（调试发包）：
+  - ensureUpstreamConnected()：维护一条到 forwarder upstream 的长期 TCP 连接（会占用“唯一上游槽位”）
+  - /api/upstream/send：将网页输入打包为协议帧并写入 upstream
+- downstream（收包展示）：
+  - connectDownstream()/downstreamPool：sidecar 主动创建若干条下游 TCP 连接用于接收广播数据
+  - parseFramesFromSocket()：按 Header(24)+Body 解析帧，body 以 base64 形式给前端
+  - /api/downstream/stream：SSE 推送帧到浏览器（可按 conn_id 过滤）
+- admin 代理：
+  - /api/stats、/api/events：从 forwarder 的 admin 端口拉取并转发给前端页面
+*/
 const express = require('express');
 const fetch = require('node-fetch');
 const net = require('net');
@@ -37,7 +52,7 @@ let upstreamConnecting = false;
 let upstreamConnectedAtMs = 0;
 let upstreamLastError = '';
 
-const sseClients = new Set(); // res
+const sseClients = new Set(); // SSE 响应对象（res）
 const frameRing = [];
 const FRAME_RING_MAX = 200;
 let framesReceived = 0;
@@ -45,7 +60,7 @@ let framesStreamed = 0;
 let downstreamLastError = '';
 let downstreamConnectedAtMs = 0;
 
-// downstream connection pool (to increase downstream clients)
+// 下游连接池（用于模拟/增加 sidecar 的下游客户端连接数）
 let initialDownstreamConnections = envInt('DOWNSTREAM_CONNECTIONS', 1);
 if (!Number.isFinite(initialDownstreamConnections) || initialDownstreamConnections < 0) initialDownstreamConnections = 1;
 if (initialDownstreamConnections > 200) initialDownstreamConnections = 200;
@@ -124,7 +139,7 @@ function ensureUpstreamConnected(cb) {
     sock.destroy();
   });
 
-  // In case connect fails
+  // 防止 connect 阶段直接失败时 upstreamConnecting 卡死
   sock.once('error', (err) => {
     upstreamConnecting = false;
     cb(err);
@@ -424,7 +439,7 @@ app.get('/api/downstream/stream', (req, res) => {
   res.write(`data: ${JSON.stringify({ ts_ms: nowMs(), ring_size: frameRing.length, conn_id: connId })}\n\n`);
 
   res.__conn_id = connId;
-  // send recent frames (global or per-conn)
+  // 新 SSE 订阅建立后，先补发最近缓存的帧（全局或按 conn 过滤）
   if (connId == null) {
     for (const f of frameRing) sseSend(res, 'frame', f);
   } else {
@@ -437,7 +452,7 @@ app.get('/api/downstream/stream', (req, res) => {
     try {
       res.write(`event: ping\ndata: ${nowMs()}\n\n`);
     } catch (e) {
-      // ignore
+      // 忽略：通常是客户端断开导致 write 抛错
     }
   }, 15000);
 

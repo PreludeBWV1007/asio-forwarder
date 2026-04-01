@@ -6,5 +6,5 @@ CXX_DEFINES =
 
 CXX_INCLUDES = -I/home/xuanrui/asio-forwarder/include
 
-CXX_FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic
+CXX_FLAGS = -O3 -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic
 

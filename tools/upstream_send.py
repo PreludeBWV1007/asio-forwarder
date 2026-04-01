@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""
+本文件职责（上游发包自测工具）：
+- 连接转发器 upstream 端口，按协议打包并发送 1 帧：Header(24, little-endian) + Body
+- 默认 body 为 UTF-8 文本（--text），用于快速验证“上游 -> 下游广播”链路
+
+常用示例：
+  python3 tools/upstream_send.py --host 127.0.0.1 --port 19001 --type 100 --seq 1 --text "你好"
+"""
 import argparse
 import socket
 import struct

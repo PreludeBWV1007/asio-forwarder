@@ -1,5 +1,16 @@
+/*
+本文件结构（前端公共工具）：
+- DOM 工具：qs/qsa/setActiveNav（导航高亮）
+- 数值格式化：fmtBytes/fmtRate（监控大屏用）
+- 二进制展示：
+  - b64ToBytes：把 body 的 base64 还原为 Uint8Array
+  - bytesToHex：以十六进制预览 bytes（可截断）
+  - bytesToUtf8Safe：UTF-8 安全解码（按字节截断时回退到合法边界，避免中文乱码）
+说明：body 可能是任意二进制；utf8 预览仅用于“尽力展示”，需要精确内容可切换 hex。
+*/
+
 (() => {
-  if (window.__common) return; // idempotent: avoid double-exec redeclare issues
+  if (window.__common) return; // 幂等：避免重复加载导致重复声明/执行
 
   const qs = (sel) => document.querySelector(sel);
   const qsa = (sel) => Array.from(document.querySelectorAll(sel));
@@ -51,6 +62,26 @@
     }
   };
 
-  window.__common = { qs, qsa, setActiveNav, fmtBytes, fmtRate, b64ToBytes, bytesToHex, bytesToUtf8 };
+  // UTF-8 按“字节”截断时的安全解码。
+  //
+  // 说明：UTF-8 是变长编码，直接按固定字节数 slice 可能把一个字符切成半截，
+  // 导致出现替换字符（�）或“乱码”。这里会把末尾回退到合法的 UTF-8 边界再解码。
+  const bytesToUtf8Safe = (bytes, maxBytes) => {
+    const cap = maxBytes == null ? bytes.length : Math.min(bytes.length, Math.max(0, maxBytes));
+    let end = cap;
+    const decStrict = new TextDecoder('utf-8', { fatal: true });
+    while (end > 0) {
+      try {
+        const text = decStrict.decode(bytes.slice(0, end));
+        return text + (bytes.length > end ? '…' : '');
+      } catch (e) {
+        // 逐步回退，直到落在合法边界。
+        end -= 1;
+      }
+    }
+    return bytes.length ? '(invalid utf-8)' : '';
+  };
+
+  window.__common = { qs, qsa, setActiveNav, fmtBytes, fmtRate, b64ToBytes, bytesToHex, bytesToUtf8, bytesToUtf8Safe };
 })();
 

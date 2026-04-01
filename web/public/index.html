@@ -9,6 +9,16 @@
     <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   </head>
   <body>
+    <!--
+      本页面结构（监控大屏）：
+      - 数据来源：GET /api/stats、GET /api/events（由 sidecar 代理转发器 admin 接口）
+      - 展示内容：
+        - 连接状态：上游是否在线、下游在线数、SSE 客户端数
+        - 吞吐：frames/s、bytes/s（以相邻两次采样的增量计算）
+        - 队列：下游待发送总字节 downstream_pending_bytes（用于观察慢下游积压）
+        - 事件：转发器 /api/events（错误/连接变更等）
+      - 依赖：common.js（格式化、导航）、Chart.js（折线图）
+    -->
     <div class="topbar">
       <div class="wrap">
         <div class="brand">

@@ -1,5 +1,10 @@
 #pragma once
 
+// 本文件职责（配置结构）：
+// - Config：转发器运行时配置（监听端口/线程数/超时/包长限制/背压阈值/metrics 周期等）
+// - load_config_or_throw()：从 JSON 读取并校验配置（实现在 `src/main.cpp`）
+// 典型配置示例：`configs/dev/forwarder.json`
+
 #include <cstdint>
 #include <string>
 
@@ -29,7 +34,7 @@ struct Config {
   struct FlowControl {
     std::uint32_t high_water_bytes = 4 * 1024 * 1024;   // 4MB
     std::uint32_t hard_limit_bytes = 16 * 1024 * 1024;  // 16MB
-    std::string on_high_water = "drop";                 // drop | disconnect
+    std::string on_high_water = "drop";                 // 高水位策略：drop | disconnect
   };
 
   struct Metrics {
@@ -50,5 +55,5 @@ struct Config {
 
 Config load_config_or_throw(const std::string& path);
 
-}  // namespace fwd
+}  // 命名空间 fwd
 

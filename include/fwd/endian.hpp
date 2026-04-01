@@ -1,5 +1,10 @@
 #pragma once
 
+// 本文件职责（小端读写工具）：
+// - 提供 read_u16_le/read_u32_le/read_u64_le：从字节指针读取小端整数
+// - 提供 write_u16_le/write_u32_le/write_u64_le：将整数写入字节指针（小端）
+// 说明：这里不依赖平台端序假设，避免 UB；用于协议 pack/unpack 的底层工具。
+
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -52,5 +57,5 @@ inline void write_u64_le(std::uint8_t* p, std::uint64_t v) {
   p[7] = static_cast<std::uint8_t>((v >> 56) & 0xff);
 }
 
-}  // namespace fwd::endian
+}  // 命名空间 fwd::endian
 

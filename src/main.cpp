@@ -1,3 +1,15 @@
+// 本文件结构（建议从这里开始读）：
+// - 配置加载：load_config_or_throw() 读取 JSON 配置并做边界校验
+// - 协议：proto::Header 的 to_string()（打日志用），以及后续 unpack/pack 的使用点
+// - DownstreamSession：单个下游连接的发送队列与背压控制（high_water/hard_limit）
+// - Forwarder：
+//   - start()：启动三类监听（upstream/downstream/admin）+ metrics 定时器
+//   - accept_upstream()/accept_downstream()：接受连接（上游为单连接槽位）
+//   - upstream_readloop()：按 “Header(24)+Body(body_len)” 读帧，校验后广播给所有下游
+//   - broadcast()：将同一份 frame（shared_ptr<string>）分发给所有下游，避免 N 份复制
+//   - admin 接口：/api/stats、/api/events（供 Web sidecar 大屏/SSE 使用）
+// - main()：读取配置路径，启动 io_context 线程池
+
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -96,6 +108,10 @@ Config load_config_or_throw(const std::string& path) {
 }
 
 // ===== forwarder =====
+// Metrics 仅用于粗粒度可观测性（大屏 + admin 接口）。
+// 这里刻意采用“无锁 + 近似”的实现（relaxed 原子），原因是：
+// - 指标主要用于观察趋势，不要求强一致的精确值
+// - 不希望在热路径上引入锁竞争
 struct Metrics {
   std::atomic<std::uint64_t> upstream_connects{0};
   std::atomic<std::uint64_t> downstream_connects{0};
@@ -141,6 +157,12 @@ class DownstreamSession : public std::enable_shared_from_this<DownstreamSession>
     boost::asio::post(strand_, [self, bytes] {
       if (self->stopped_) return;
 
+      // 背压 / 内存保护：
+      // - 每个下游有自己的发送队列，因为下游速度可能各不相同（有人快、有人慢）。
+      // - 用 pending_bytes_ 统计排队字节数，避免慢下游导致内存无上限增长。
+      // - 策略：
+      //   - 高水位（high_water）：开始对“这个下游”丢弃新消息或断开连接（不影响其他下游）
+      //   - 硬上限（hard_limit）：一定断开，保护进程内存上限
       const auto new_total = self->pending_bytes_ + bytes->size();
       if (new_total > self->cfg_.flow.high_water_bytes && new_total <= self->cfg_.flow.hard_limit_bytes) {
         if (self->cfg_.flow.on_high_water == "disconnect") {
@@ -152,7 +174,7 @@ class DownstreamSession : public std::enable_shared_from_this<DownstreamSession>
           fwd::log::write(fwd::log::Level::kWarn, "downstream high-water disconnect ep=" + self->endpoint_str());
           return;
         }
-        // default: drop (不给这个下游排队，保护内存；不影响其他下游)
+        // 默认策略：drop（不给这个下游排队，保护内存；不影响其他下游）
         self->metrics_.drops.fetch_add(1, std::memory_order_relaxed);
         if (!self->high_water_logged_) {
           self->high_water_logged_ = true;
@@ -324,6 +346,9 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
           down_[write_idx++] = d;
         }
       }
+      // 机会性清理：
+      // 这里不额外引入“回收线程”，而是在 stats/broadcast 已经持锁遍历时顺便压缩容器，
+      // 移除已断开的 session，保持实现简单、开销可控。
       down_.resize(write_idx);
     }
     return s;
@@ -409,12 +434,16 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
     auto t = std::make_shared<boost::asio::steady_timer>(ex);
     t->expires_after(timeout);
 
+    // 读超时实现：让 timer 与 async_read 竞态。
+    // - timer 先触发：cancel socket，read 通常以 operation_aborted 等错误返回
+    // - read 先完成：取消 timer
+    // 目的：在“半开连接/对端卡死/网络抖动”时，读循环不会长期挂住。
     co_spawn(
         ex,
         [t, done, &sock]() -> awaitable<void> {
           boost::system::error_code tec;
           co_await t->async_wait(boost::asio::redirect_error(use_awaitable, tec));
-          if (tec) co_return;  // canceled
+          if (tec) co_return;  // timer 已取消（通常是 read 先完成）
           if (!done->load(std::memory_order_acquire)) {
             boost::system::error_code ec2;
             sock.cancel(ec2);
@@ -454,6 +483,9 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
       }
       self->metrics_.upstream_connects.fetch_add(1, std::memory_order_relaxed);
 
+      // 单上游设计：
+      // 这个转发器假设只有一个上游生产者（例如某个 gateway）。
+      // 若新上游连入，则主动关闭旧上游，避免多源并存导致语义混乱，也让广播逻辑保持简单。
       if (self->upstream_) {
         fwd::log::write(fwd::log::Level::kWarn, "new upstream connected, closing previous upstream");
         self->push_event(fwd::log::Level::kWarn, "new upstream connected, closing previous upstream");
@@ -607,6 +639,8 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
       metrics_.frames_in.fetch_add(1, std::memory_order_relaxed);
       metrics_.bytes_in.fetch_add(proto::Header::kHeaderLen + body.size(), std::memory_order_relaxed);
 
+      // 将 header+body 拼成一段连续内存，并在所有下游之间共享（shared_ptr）。
+      // 好处：避免“下游 N 个就复制 N 份 payload”；每个下游只是在队列里保存一份 shared_ptr。
       auto out = std::make_shared<std::string>();
       out->reserve(proto::Header::kHeaderLen + body.size());
       const auto packed = h.pack_le();
@@ -640,6 +674,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
           down_[write_idx++] = s;
         }
       }
+      // 与 stats 相同的机会性清理：压缩容器，减少后续遍历成本。
       down_.resize(write_idx);
     }
 
@@ -681,7 +716,10 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
 
   std::shared_ptr<tcp::socket> upstream_;
 
-  // 保存下游弱引用：断开时自动清理
+  // 下游 session 列表采用“简单 vector + 机会性清理”的方式维护。
+  // 这里刻意不引入更复杂的容器/弱引用机制，原因是：
+  // - session 由此 vector 持有（shared_ptr）
+  // - 连接断开后 is_open() 会变为 false，随后在 snapshot_stats()/broadcast() 持同一把锁时被移除
   std::mutex down_mu_;
   std::vector<std::shared_ptr<DownstreamSession>> down_;
 
@@ -693,7 +731,7 @@ class Forwarder : public std::enable_shared_from_this<Forwarder> {
   std::deque<AdminEvent> events_;
 };
 
-}  // namespace fwd
+}  // 命名空间 fwd
 
 int main(int argc, char** argv) {
   try {
