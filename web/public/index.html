@@ -18,7 +18,7 @@
         <div class="nav">
           <a href="/index.html">大屏</a>
           <a href="/upstream.html">上游发包</a>
-          <a href="/downstream.html">下游收包</a>
+          <a href="/downstream.html">下游管理</a>
         </div>
       </div>
     </div>
@@ -96,8 +96,11 @@
     </div>
 
     <script>
-      const { setActiveNav, fmtBytes } = window.__common;
-      setActiveNav();
+      window.addEventListener('DOMContentLoaded', () => {
+      const c = window.__common;
+      if (!c) throw new Error('common.js not loaded');
+      const { fmtBytes } = c;
+      c.setActiveNav();
 
       const state = {
         last: null,
@@ -204,6 +207,7 @@
       refreshEvents();
       setInterval(refreshStats, 1000);
       setInterval(refreshEvents, 5000);
+      });
     </script>
   </body>
 </html>

@@ -17,7 +17,7 @@
         <div class="nav">
           <a href="/index.html">大屏</a>
           <a href="/upstream.html">上游发包</a>
-          <a href="/downstream.html">下游收包</a>
+          <a href="/downstream.html">下游管理</a>
         </div>
       </div>
     </div>
@@ -72,67 +72,70 @@
     </div>
 
     <script>
-      const { setActiveNav } = window.__common;
-      setActiveNav();
+      window.addEventListener('DOMContentLoaded', () => {
+        const c = window.__common;
+        if (!c) throw new Error('common.js not loaded');
+        c.setActiveNav();
 
-      const logEl = document.getElementById('log');
-      const statusEl = document.getElementById('status');
-      const logs = [];
+        const logEl = document.getElementById('log');
+        const statusEl = document.getElementById('status');
+        const logs = [];
 
-      function pushLog(line) {
-        logs.unshift(line);
-        while (logs.length > 200) logs.pop();
-        logEl.textContent = logs.join('\n');
-      }
-
-      async function refreshStatus() {
-        try {
-          const r = await fetch('/api/upstream/status', { cache: 'no-store' });
-          const js = await r.json();
-          statusEl.textContent = `connected=${js.connected} connected_at_ms=${js.connected_at_ms} last_error=${js.last_error || '-'}  note=${js.note}`;
-        } catch (e) {
-          statusEl.textContent = `status fetch failed: ${String(e)}`;
+        function pushLog(line) {
+          logs.unshift(line);
+          while (logs.length > 200) logs.pop();
+          logEl.textContent = logs.join('\n');
         }
-      }
 
-      document.getElementById('btnSend').addEventListener('click', async () => {
-        const msg_type = parseInt(document.getElementById('msgType').value || '100', 10);
-        const flags = parseInt(document.getElementById('flags').value || '0', 10);
-        const seq = parseInt(document.getElementById('seq').value || '1', 10);
-        const body_encoding = document.getElementById('enc').value;
-        const body = document.getElementById('body').value || '';
-
-        try {
-          const r = await fetch('/api/upstream/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ msg_type, flags, seq, body_encoding, body }),
-          });
-          const js = await r.json();
-          const ok = !!js.ok;
-          pushLog(`${new Date().toLocaleTimeString()} ok=${ok} type=${msg_type} flags=${flags} seq=${seq} len=${body.length} enc=${body_encoding} ${js.error ? ' err=' + js.error : ''}`);
-          if (!ok && js.detail) pushLog(`  detail: ${js.detail}`);
-          if (js.warning) pushLog(`  warning: ${js.warning}`);
-        } catch (e) {
-          pushLog(`${new Date().toLocaleTimeString()} send failed: ${String(e)}`);
-        } finally {
-          refreshStatus();
+        async function refreshStatus() {
+          try {
+            const r = await fetch('/api/upstream/status', { cache: 'no-store' });
+            const js = await r.json();
+            statusEl.textContent = `connected=${js.connected} connected_at_ms=${js.connected_at_ms} last_error=${js.last_error || '-'}  note=${js.note}`;
+          } catch (e) {
+            statusEl.textContent = `status fetch failed: ${String(e)}`;
+          }
         }
+
+        document.getElementById('btnSend').addEventListener('click', async () => {
+          const msg_type = parseInt(document.getElementById('msgType').value || '100', 10);
+          const flags = parseInt(document.getElementById('flags').value || '0', 10);
+          const seq = parseInt(document.getElementById('seq').value || '1', 10);
+          const body_encoding = document.getElementById('enc').value;
+          const body = document.getElementById('body').value || '';
+
+          try {
+            const r = await fetch('/api/upstream/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ msg_type, flags, seq, body_encoding, body }),
+            });
+            const js = await r.json();
+            const ok = !!js.ok;
+            pushLog(`${new Date().toLocaleTimeString()} ok=${ok} type=${msg_type} flags=${flags} seq=${seq} len=${body.length} enc=${body_encoding} ${js.error ? ' err=' + js.error : ''}`);
+            if (!ok && js.detail) pushLog(`  detail: ${js.detail}`);
+            if (js.warning) pushLog(`  warning: ${js.warning}`);
+          } catch (e) {
+            pushLog(`${new Date().toLocaleTimeString()} send failed: ${String(e)}`);
+          } finally {
+            refreshStatus();
+          }
+        });
+
+        document.getElementById('btnDisc').addEventListener('click', async () => {
+          try {
+            await fetch('/api/upstream/disconnect', { method: 'POST' });
+            pushLog(`${new Date().toLocaleTimeString()} upstream disconnected`);
+          } catch (e) {
+            pushLog(`${new Date().toLocaleTimeString()} disconnect failed: ${String(e)}`);
+          } finally {
+            refreshStatus();
+          }
+        });
+
+        refreshStatus();
+        setInterval(refreshStatus, 1500);
       });
-
-      document.getElementById('btnDisc').addEventListener('click', async () => {
-        try {
-          await fetch('/api/upstream/disconnect', { method: 'POST' });
-          pushLog(`${new Date().toLocaleTimeString()} upstream disconnected`);
-        } catch (e) {
-          pushLog(`${new Date().toLocaleTimeString()} disconnect failed: ${String(e)}`);
-        } finally {
-          refreshStatus();
-        }
-      });
-
-      refreshStatus();
-      setInterval(refreshStatus, 1500);
     </script>
   </body>
 </html>

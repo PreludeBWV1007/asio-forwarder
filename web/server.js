@@ -45,6 +45,15 @@ let framesStreamed = 0;
 let downstreamLastError = '';
 let downstreamConnectedAtMs = 0;
 
+// downstream connection pool (to increase downstream clients)
+let initialDownstreamConnections = envInt('DOWNSTREAM_CONNECTIONS', 1);
+if (!Number.isFinite(initialDownstreamConnections) || initialDownstreamConnections < 0) initialDownstreamConnections = 1;
+if (initialDownstreamConnections > 200) initialDownstreamConnections = 200;
+let nextDownstreamId = 1;
+const downstreamPool = new Map(); // id -> { id, sock, connectedAtMs, lastError, reconnectTimer }
+const downstreamFrameRings = new Map(); // id -> frame[]
+const DOWNSTREAM_FRAME_RING_MAX = 300;
+
 function nowMs() {
   return Date.now();
 }
@@ -52,6 +61,13 @@ function nowMs() {
 function pushRing(item) {
   frameRing.push(item);
   while (frameRing.length > FRAME_RING_MAX) frameRing.shift();
+}
+
+function pushDownstreamRing(connId, frame) {
+  if (!downstreamFrameRings.has(connId)) downstreamFrameRings.set(connId, []);
+  const ring = downstreamFrameRings.get(connId);
+  ring.push(frame);
+  while (ring.length > DOWNSTREAM_FRAME_RING_MAX) ring.shift();
 }
 
 function sseSend(res, event, dataObj) {
@@ -66,6 +82,16 @@ function sseSend(res, event, dataObj) {
 
 function broadcastFrame(frame) {
   for (const res of Array.from(sseClients)) {
+    const ok = sseSend(res, 'frame', frame);
+    if (!ok) sseClients.delete(res);
+    else framesStreamed += 1;
+  }
+}
+
+function broadcastFrameToFiltered(frame) {
+  for (const res of Array.from(sseClients)) {
+    const want = res.__conn_id;
+    if (want != null && String(want) !== String(frame.conn_id)) continue;
     const ok = sseSend(res, 'frame', frame);
     if (!ok) sseClients.delete(res);
     else framesStreamed += 1;
@@ -124,77 +150,121 @@ async function fetchJson(pathname) {
 }
 
 // ---- downstream receiver ----
-function startDownstreamLoop() {
-  function connect() {
-    const sock = net.createConnection({ host: FWD_DOWN_HOST, port: FWD_DOWN_PORT }, () => {
-      downstreamLastError = '';
-      downstreamConnectedAtMs = nowMs();
-      console.log(`downstream connected to ${FWD_DOWN_HOST}:${FWD_DOWN_PORT}`);
-    });
-    sock.setNoDelay(true);
+function parseFramesFromSocket(sock, connId, onFrame, onBadHeader) {
+  let buf = Buffer.alloc(0);
+  let want = HEADER_LEN;
+  let currentHeader = null;
 
-    let buf = Buffer.alloc(0);
-    let want = HEADER_LEN;
-    let currentHeader = null;
+  function pump() {
+    while (buf.length >= want) {
+      const chunk = buf.slice(0, want);
+      buf = buf.slice(want);
 
-    function pump() {
-      while (buf.length >= want) {
-        const chunk = buf.slice(0, want);
-        buf = buf.slice(want);
-
-        if (!currentHeader) {
-          const magic = chunk.readUInt32LE(0);
-          const ver = chunk.readUInt16LE(4);
-          const hlen = chunk.readUInt16LE(6);
-          const blen = chunk.readUInt32LE(8);
-          const msg_type = chunk.readUInt32LE(12);
-          const flags = chunk.readUInt32LE(16);
-          const seq = chunk.readUInt32LE(20);
-          if (magic !== MAGIC || ver !== VERSION || hlen !== HEADER_LEN) {
-            downstreamLastError = `invalid_header magic=${magic} ver=${ver} hlen=${hlen}`;
-            sock.destroy();
-            return;
-          }
-          currentHeader = { magic, ver, hlen, blen, msg_type, flags, seq };
-          want = blen;
-          if (want === 0) {
-            const frame = { ts_ms: nowMs(), header: currentHeader, body_b64: '', body_len: 0 };
-            currentHeader = null;
-            want = HEADER_LEN;
-            framesReceived += 1;
-            pushRing(frame);
-            broadcastFrame(frame);
-          }
-        } else {
-          const body = chunk;
-          const frame = {
-            ts_ms: nowMs(),
-            header: currentHeader,
-            body_len: body.length,
-            body_b64: body.toString('base64'),
-          };
+      if (!currentHeader) {
+        const magic = chunk.readUInt32LE(0);
+        const ver = chunk.readUInt16LE(4);
+        const hlen = chunk.readUInt16LE(6);
+        const blen = chunk.readUInt32LE(8);
+        const msg_type = chunk.readUInt32LE(12);
+        const flags = chunk.readUInt32LE(16);
+        const seq = chunk.readUInt32LE(20);
+        if (magic !== MAGIC || ver !== VERSION || hlen !== HEADER_LEN) {
+          onBadHeader(`invalid_header magic=${magic} ver=${ver} hlen=${hlen}`);
+          sock.destroy();
+          return;
+        }
+        currentHeader = { magic, ver, hlen, blen, msg_type, flags, seq };
+        want = blen;
+        if (want === 0) {
+          onFrame({ ts_ms: nowMs(), conn_id: connId, header: currentHeader, body_b64: '', body_len: 0 });
           currentHeader = null;
           want = HEADER_LEN;
-          framesReceived += 1;
-          pushRing(frame);
-          broadcastFrame(frame);
         }
+      } else {
+        const body = chunk;
+        onFrame({
+          ts_ms: nowMs(),
+          conn_id: connId,
+          header: currentHeader,
+          body_len: body.length,
+          body_b64: body.toString('base64'),
+        });
+        currentHeader = null;
+        want = HEADER_LEN;
       }
     }
-
-    sock.on('data', (data) => {
-      buf = Buffer.concat([buf, data]);
-      pump();
-    });
-    sock.on('error', (err) => {
-      downstreamLastError = String(err && err.message ? err.message : err);
-    });
-    sock.on('close', () => {
-      console.log('downstream disconnected, retrying in 1s');
-      setTimeout(connect, 1000);
-    });
   }
-  connect();
+
+  sock.on('data', (data) => {
+    buf = Buffer.concat([buf, data]);
+    pump();
+  });
+}
+
+function connectDownstream(id) {
+  const slot = downstreamPool.get(id);
+  if (!slot) return;
+  if (slot.sock && !slot.sock.destroyed) return;
+
+  const sock = net.createConnection({ host: FWD_DOWN_HOST, port: FWD_DOWN_PORT }, () => {
+    slot.connectedAtMs = nowMs();
+    slot.lastError = '';
+    downstreamLastError = '';
+    downstreamConnectedAtMs = slot.connectedAtMs;
+    console.log(`downstream#${id} connected to ${FWD_DOWN_HOST}:${FWD_DOWN_PORT}`);
+  });
+  slot.sock = sock;
+  sock.setNoDelay(true);
+
+  parseFramesFromSocket(
+    sock,
+    id,
+    (frame) => {
+      framesReceived += 1;
+      pushRing(frame);
+      pushDownstreamRing(id, frame);
+      broadcastFrameToFiltered(frame);
+    },
+    (errText) => {
+      slot.lastError = errText;
+      downstreamLastError = errText;
+    }
+  );
+
+  sock.on('error', (err) => {
+    const msg = String(err && err.message ? err.message : err);
+    slot.lastError = msg;
+    downstreamLastError = msg;
+  });
+  sock.on('close', () => {
+    slot.sock = null;
+    if (!downstreamPool.has(id)) return;
+    slot.reconnectTimer = setTimeout(() => connectDownstream(id), 1000);
+  });
+}
+
+function addDownstreamConnection() {
+  if (downstreamPool.size >= 200) return null;
+  const id = nextDownstreamId++;
+  downstreamPool.set(id, { id, sock: null, connectedAtMs: 0, lastError: '', reconnectTimer: null });
+  connectDownstream(id);
+  return id;
+}
+
+function removeDownstreamConnection(id) {
+  const slot = downstreamPool.get(id);
+  if (!slot) return false;
+  if (slot.reconnectTimer) clearTimeout(slot.reconnectTimer);
+  if (slot.sock && !slot.sock.destroyed) slot.sock.destroy();
+  downstreamPool.delete(id);
+  downstreamFrameRings.delete(id);
+  return true;
+}
+
+function reconcileDownstreamPool() {
+  for (const [id, slot] of downstreamPool.entries()) {
+    if (!slot.sock || slot.sock.destroyed) connectDownstream(id);
+  }
 }
 
 // ---- API ----
@@ -228,6 +298,10 @@ app.get('/api/stats', async (req, res) => {
         connected_at_ms: downstreamConnectedAtMs,
         last_error: downstreamLastError,
       },
+      downstream_pool: {
+        desired: downstreamPool.size,
+        active: Array.from(downstreamPool.values()).filter(s => s.sock && !s.sock.destroyed).length,
+      },
       sse_clients: sseClients.size,
       frames_received: framesReceived,
       frames_streamed: framesStreamed,
@@ -243,6 +317,52 @@ app.get('/api/events', async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: 'forwarder_admin_unreachable', detail: String(e && e.message ? e.message : e) });
   }
+});
+
+app.get('/api/downstream/status', async (req, res) => {
+  const slots = Array.from(downstreamPool.values()).sort((a, b) => a.id - b.id).map(s => ({
+    id: s.id,
+    connected: !!(s.sock && !s.sock.destroyed),
+    connected_at_ms: s.connectedAtMs,
+    last_error: s.lastError,
+    frames_ring: (downstreamFrameRings.get(s.id) || []).length,
+  }));
+  res.json({
+    host: FWD_DOWN_HOST,
+    port: FWD_DOWN_PORT,
+    desired: downstreamPool.size,
+    active: slots.filter(s => s.connected).length,
+    slots,
+  });
+});
+
+app.post('/api/downstream/set_connections', async (req, res) => {
+  const body = req.body || {};
+  let n = parseInt(body.count, 10);
+  if (!Number.isFinite(n) || n < 0) n = 0;
+  if (n > 200) n = 200;
+  while (downstreamPool.size < n) addDownstreamConnection();
+  while (downstreamPool.size > n) {
+    const ids = Array.from(downstreamPool.keys()).sort((a, b) => b - a);
+    if (!ids.length) break;
+    removeDownstreamConnection(ids[0]);
+  }
+  res.json({ ok: true, desired: downstreamPool.size });
+});
+
+app.post('/api/downstream/add', async (req, res) => {
+  const id = addDownstreamConnection();
+  if (id == null) return res.status(400).json({ error: 'limit_reached' });
+  res.json({ ok: true, id });
+});
+
+app.post('/api/downstream/remove', async (req, res) => {
+  const body = req.body || {};
+  const id = parseInt(body.id, 10);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
+  const ok = removeDownstreamConnection(id);
+  if (!ok) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
 });
 
 app.get('/api/upstream/status', async (req, res) => {
@@ -294,15 +414,23 @@ app.post('/api/upstream/send', async (req, res) => {
 });
 
 app.get('/api/downstream/stream', (req, res) => {
+  const connId = req.query && req.query.conn_id != null ? String(req.query.conn_id) : null;
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
 
   res.write('event: hello\n');
-  res.write(`data: ${JSON.stringify({ ts_ms: nowMs(), ring_size: frameRing.length })}\n\n`);
-  // send recent frames
-  for (const f of frameRing) sseSend(res, 'frame', f);
+  res.write(`data: ${JSON.stringify({ ts_ms: nowMs(), ring_size: frameRing.length, conn_id: connId })}\n\n`);
+
+  res.__conn_id = connId;
+  // send recent frames (global or per-conn)
+  if (connId == null) {
+    for (const f of frameRing) sseSend(res, 'frame', f);
+  } else {
+    const ring = downstreamFrameRings.get(parseInt(connId, 10)) || [];
+    for (const f of ring) sseSend(res, 'frame', f);
+  }
 
   sseClients.add(res);
   const timer = setInterval(() => {
@@ -319,7 +447,15 @@ app.get('/api/downstream/stream', (req, res) => {
   });
 });
 
-startDownstreamLoop();
+app.get('/api/downstream/frames', async (req, res) => {
+  const connId = req.query && req.query.conn_id != null ? parseInt(String(req.query.conn_id), 10) : NaN;
+  if (!Number.isFinite(connId)) return res.status(400).json({ error: 'invalid_conn_id' });
+  const ring = downstreamFrameRings.get(connId) || [];
+  res.json({ conn_id: connId, frames: ring });
+});
+
+while (downstreamPool.size < initialDownstreamConnections) addDownstreamConnection();
+reconcileDownstreamPool();
 
 app.listen(HTTP_PORT, HTTP_HOST, () => {
   console.log(`web sidecar listening on http://${HTTP_HOST}:${HTTP_PORT}`);
