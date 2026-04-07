@@ -1,39 +1,60 @@
-# asio-forwarder（对等 TCP 中继 + Msgpack 状态机）
+# asio-forwarder（对等 TCP 中继）
 
-**C++20 + Boost.Asio（协程）**。所有客户端连接**同一业务端口**，无「上游/下游」之分：先 **LOGIN** 绑定 `user_id`，再发 **HEARTBEAT / TRANSFER / CONTROL**。线格式为 **v2 头 40B + Body**；客户端上行 Body 为 **msgpack map**（详见 [`docs/protocol.md`](docs/protocol.md)）。
+`asio-forwarder` 是一个 **C++20 + Boost.Asio（协程）** 实现的 **对等（peer-to-peer）TCP 中继服务**：所有客户端连接同一业务端口，先 **LOGIN** 绑定 `user_id`，随后通过 **Msgpack 状态机**（`op`）进行心跳与消息转发。
 
-- **稳定性**：帧长上限、读/空闲超时、每连接发送队列背压、`session.heartbeat_timeout_ms` 心跳踢线。
-- **依赖**：Boost；构建时 **FetchContent 拉取 msgpack-c**（`MSGPACK_NO_BOOST`）。
+协议：**v2 线格式（40B 小端 header）+ 上行 msgpack map**；服务器下行分两类：**200 DELIVER（纯 payload 字节）**、**201 SERVER_REPLY（msgpack ACK/错误/CONTROL 返回）**。详见 `docs/protocol.md`。
 
-## 快速开始
+## 项目特征
+
+- **单端口对等接入**：配置简单（仅 `client.listen`），无“上游/下游”固定角色。
+- **透明转发**：服务器不解析业务 payload，200 的 Body 为原样字节。
+- **稳定性保护**：最大 body 长度、读/空闲超时、心跳踢线、每连接发送队列背压（drop/disconnect）。
+- **可观测性**：admin 只读 HTTP：`/api/health`、`/api/stats`、`/api/events`。
+- **自测/压测工具齐全**：e2e、测试套件、交互式多连接控制台（支持 `flood`）。
+
+## 架构与实现方式（简要）
+
+- 进程入口：`src/main.cpp`
+- 关键组件：
+  - **`RelayServer`**：accept client/admin；维护 `user_id → deque<session>`；实现 TRANSFER 路由策略
+  - **`TcpSession`**：协程读帧 + strand 串行写出；队列背压
+- 线程模型：`threads.io` 个线程跑同一个 `io_context`（配置中 `threads.biz` 当前未接入独立线程池）。
+- 管理接口：Boost.Beast 处理 HTTP GET，返回 JSON。
+
+更完整的架构说明见 `docs/architecture.md`、`docs/data_flow.md`、`docs/design.md`。
+
+## 使用方法
+
+### 构建
 
 ```bash
-cd asio-forwarder
 ./scripts/build.sh
+```
+
+### 运行（开发配置）
+
+```bash
 ./scripts/run_dev.sh
 ```
 
-默认 [`configs/dev/forwarder.json`](configs/dev/forwarder.json)：
+默认配置文件：`configs/dev/forwarder.json`
 
-- **client**：`0.0.0.0:19000`（所有客户端连此口；配置键为 `client.listen`，兼容旧键 `upstream.listen`）
-- **admin**：`127.0.0.1:19003`（`GET`：`/api/health`、`/health`、`/api/stats`、`/api/events`）
-- **session**：每用户最大连接数、心跳、广播上限、轮流默认间隔等
+- **client**：`0.0.0.0:19000`
+- **admin**：`127.0.0.1:19003`
 
-## 测试与压测（汇总）
+## 测试脚本与使用方式
 
-完整说明见 **[`docs/testing.md`](docs/testing.md)**，包括：
-
-- CTest / `scripts/test_e2e.sh`
-- `relay_e2e_runner.py`、`relay_test_suite.py`
-- **交互式控制台** [`tools/relay_cli.py`](tools/relay_cli.py)（多连接、`flood`、admin 拉取）
-- 一次 loopback 压测样例数据表
-
-极简命令：
+完整测试与工具说明见 **`docs/testing.md`**。常用入口：
 
 ```bash
 pip install -r tools/requirements-relay.txt
 export PYTHONPATH=tools
-python3 tools/relay_cli.py --spawn-server   # 或指定 --host/--port/--admin-port 连已有服务
+
+# 交互式控制台（推荐：一个终端管理多连接、发包、压测、拉取 admin）
+python3 tools/relay_cli.py --host 127.0.0.1 --port 19000 --admin-port 19003
+
+# 或一键拉起 build/asio_forwarder（随机端口）后进入控制台
+python3 tools/relay_cli.py --spawn-server
 ```
 
 自动化回归：
@@ -44,40 +65,29 @@ cd build && ctest --output-on-failure
 ./scripts/test_e2e.sh
 ```
 
-`test_e2e.sh`：随机端口临时配置 → 启动 `asio_forwarder` → `relay_e2e_runner` + `relay_test_suite` → admin `/api/health`。
+## 某次压测数据（样例）
 
-## Web 可视化
+说明：以下为一次 `relay_cli.py --spawn-server` 的 loopback 运行结果（4 条 TCP：用户 100/200/300/400，其中一条为 control，其余为 data）。**数值与机器/内核/网络栈/客户端语言相关**，用于相对参考；建议你在目标环境复跑。
 
-本仓库已移除旧 Protobuf / Web sidecar。如需可视化，需按当前 msgpack 协议单独实现。
+| 场景 | payload | count | window | 发送速率（TRANSFER/s） | ACK RTT p50/p95/p99 (ms) |
+|------|--------:|------:|-------:|------------------------:|--------------------------:|
+| unicast → 单接收者 | 32 B | 20,000 | 256 | ≈ 7,363 | ≈ 1 / 7 / 44 |
+| unicast | 1,024 B | 10,000 | 128 | ≈ 6,700 | ≈ 2 / 10 / 15 |
+| unicast | 65,536 B | 1,000 | 32 | ≈ 4,478 | ≈ 3 / 6 / 12 |
+| broadcast（约 3 个其他用户各 1 条 DELIVER/次） | 32 B | 20,000 | 256 | ≈ 3,076 | ≈ 75 / 92 / 101 |
+| round_robin，`interval_ms=0`（同上多接收者） | 32 B | 20,000 | 256 | ≈ 4,064 | ≈ 66 / 86 / 93 |
 
-## 协议与设计文档
+## 文档导航
 
-| 文档 | 内容 |
-|------|------|
-| [`docs/protocol.md`](docs/protocol.md) | v2 帧、msgpack 字段、200/201、`msg_type` |
-| [`docs/architecture.md`](docs/architecture.md) | 组件、线程与配置注意点 |
-| [`docs/design.md`](docs/design.md) | 目标、取舍、扩展方向 |
-| [`docs/data_flow.md`](docs/data_flow.md) | 读帧到 TRANSFER 投递路径 |
-| [`docs/testing.md`](docs/testing.md) | 测试脚本、交互 CLI、压测样例 |
+- `docs/protocol.md`：协议与字段（v2 header、msgpack op、200/201）
+- `docs/architecture.md`：组件与线程/配置注意点
+- `docs/data_flow.md`：读帧 → 路由 → 写出数据流
+- `docs/design.md`：取舍与扩展方向
+- `docs/testing.md`：测试脚本、交互控制台、压测说明
+- `docs/history.md`：**版本更迭/历史变化（与旧版差异）**
 
-## 代码入口
+## 重要实现提醒（与直觉可能不同）
 
-- `src/main.cpp`：`RelayServer`、`TcpSession`、msgpack 处理、admin HTTP
-- `include/fwd/protocol.hpp`、`include/fwd/relay_constants.hpp`、`include/fwd/config.hpp`、`include/fwd/session_policy.hpp`
-- `tools/relay_proto.py`、`tools/relay_e2e_runner.py`、`tools/relay_test_suite.py`、`tools/relay_cli.py`
+- **CONTROL 权限**：当前实现**不校验 `role==\"control\"`**，任意已登录连接可 `list_users` / `kick_user`（见 `docs/protocol.md`）。
+- **Header.flags**：位定义存在，但当前主路由仍以 Body 字段为主，未按 flags 做复杂路由。
 
-## 文档与实现对照（自检清单）
-
-以下条目以 **`src/main.cpp` 与头文件为准**；若文档与代码冲突，以代码为准。
-
-- 单端口对等、`op` 状态机、200 DELIVER / 201 SERVER_REPLY：[`docs/protocol.md`](docs/protocol.md) ↔ `handle_client_frame`、`relay_constants.hpp`
-- **CONTROL**：当前实现**不校验** `role=="control"`，任意已登录连接可 `list_users` / `kick_user`（见 [`docs/protocol.md`](docs/protocol.md) 注记）
-- **Header.flags**：位定义在 `protocol.hpp`，转发主路径以 Body 为主，未按 flags 路由
-- **threads.biz**：JSON 可读入 `Config`，**当前进程仅使用 `threads.io` 跑 `io_context`**
-- 配置键与默认值：`config.hpp` + `load_config_or_throw` + `configs/dev/forwarder.json`
-
-## 常见问题
-
-- **端口占用**：修改 `configs/dev/forwarder.json` 中 `client.listen.port` / `admin.listen.port`。
-- **ctest 需网络**：首次 CMake 会下载 msgpack-c 源码包。
-- **Python 缺 msgpack**：`pip install -r tools/requirements-relay.txt`。
