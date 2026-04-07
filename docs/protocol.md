@@ -1,51 +1,87 @@
-# 协议（v2，稳定性优先）
+# 协议（v2 线格式 + Msgpack 业务体）
+
+本文与 **`src/main.cpp`**、**`include/fwd/protocol.hpp`**、**`include/fwd/relay_constants.hpp`**、**`tools/relay_proto.py`** 对齐。若与旧版文档或外部说明冲突，以本仓库代码为准。
 
 ## 字节序
 
-- 统一使用 **little-endian**（小端）。
+- 统一 **little-endian**。
 
-## Frame
+## 传输帧（所有 TCP 连接相同）
 
-一个消息帧 = `Header(40 bytes)` + `Body(body_len bytes)`。
+`Header(40 bytes)` + `Body(body_len bytes)`。
 
-> **破坏性变更**：v1 为 24 字节头 + `version=1`；当前实现与工具链仅支持 **v2 / 40 字节头**。
-
-### Header（40 bytes）
+布局与字段读写见 `proto::Header::pack_le` / `unpack_le`（`include/fwd/protocol.hpp`）。
 
 | 字段 | 类型 | 说明 |
 |---|---:|---|
-| magic | u32 | 固定 `0x44574641`（用于快速识别协议） |
-| version | u16 | 固定 `2` |
-| header_len | u16 | 固定 `40` |
-| body_len | u32 | body 长度；线上实际允许的最大值由配置 `limits.max_body_len` 约束（`body_len` 本身为 u32，理论可达约 4GiB−1） |
-| msg_type | u32 | 业务消息类型（LOGIN / TRANSFER / CONTROL 等由业务枚举约定） |
-| flags | u32 | 标志位（见下表） |
-| seq | u32 | 序列号（建议每连接单调递增，便于对账与排障） |
-| src_user_id | u64 | 发送方逻辑用户 id；未登录或系统帧可用 `0` |
-| dst_user_id | u64 | 单播目标用户 id；`0` 表示「非单播」，具体语义结合 `flags`（例如广播/群组） |
+| magic | u32 | `0x44574641` |
+| version | u16 | `2` |
+| header_len | u16 | `40` |
+| body_len | u32 | 受配置 `limits.max_body_len` 约束；超限则断开 |
+| msg_type | u32 | 客户端上行可为 0 等自定义；**服务器下发**见下节 |
+| flags | u32 | 位定义在 `protocol.hpp`（`kBroadcast` 等）；**当前转发逻辑主要依据 Body `op`，未按 flags 解析路由** |
+| seq | u32 | 建议单调；服务器回 **201** 时会回显该 `seq` |
+| src_user_id | u64 | 逻辑用户 id；未登录可为 0 |
+| dst_user_id | u64 | 可与 Body 内字段并用；**TRANSFER 单播**若 Body 未给 `dst_user_id`，可回退为 Header 的 `dst_user_id` |
 
-### flags 位（预留，与 `include/fwd/protocol.hpp` 中常量一致）
+### 服务器下发的 msg_type（`include/fwd/relay_constants.hpp`）
 
-| 位 | 常量名 | 含义 |
-|----|--------|------|
-| bit0 | `kBroadcast` | 广播意图（目标集合由业务或后续路由层解释） |
-| bit1 | `kDstIsGroup` | `dst_user_id` 表示群组/主题 id，而非单播用户 |
-| bit2 | `kNeedAck` | 期望对端回执（业务层；转发器当前可忽略） |
+| 值 | 常量 | 含义 | Body |
+|---:|---|---|---|
+| 200 | `kMsgDeliver` | 投递对端 payload | **非 msgpack**：与发送方 TRANSFER 中 `payload` **相同的原始字节** |
+| 201 | `kMsgServerReply` | 应答或错误 | **msgpack map**：LOGIN / HEARTBEAT / TRANSFER / CONTROL 的 `ok`、`error`、`op` 等 |
 
-物理地址（IP:端口）**不放在每帧头里**；记在**连接元数据**中供日志关联。
+## Body（msgpack map，字符串键）
 
-### Body
+解析失败、非 map、缺 `op` 等会导致**断开连接**（见 `handle_client_frame`）。
 
-- 原样转发的二进制载荷；转发器默认**不解释**语义。
-- 推荐业务序列化：**MessagePack**（灵活 schema；版本与字段约定由业务维护）。
-- 兼容示例：仍可使用 **Protobuf** 序列化后的 bytes（见 `proto/market.proto` 与 `docs/protobuf.md`）；此时 `msg_type` 可与 `WireMsgType` 对齐。
-- 若 Body 内再带可读的用户名字符串等，应以 **Header 中的 `src_user_id` / `dst_user_id` 为准做路由**，避免转发器解析 Msgpack。
+### 未登录
 
-## 配置与实现的默认约束（运维口径）
+**仅允许**：
 
-| 项 | 默认/建议 |
-|----|-----------|
-| `limits.max_body_len` | 默认 **64MiB**（`include/fwd/config.hpp`），配置可调，校验上限 **1GiB** |
-| 下游发送队列 | `flow.send_queue.high_water_bytes` / `hard_limit_bytes`：默认 **64MiB** / **256MiB**；策略 `drop` 或 `disconnect` |
+```text
+{ "op": "LOGIN", "user_id": <u64>, "role": "control" | "data" }
+```
 
-详见 `docs/architecture.md` 与 `configs/dev/forwarder.json`。
+- `role` 缺省按 **`data`** 处理；非法值按 **`data`**。
+- 成功后回复 **201**，字段包含 `ok`、`op:"LOGIN"`、`conn_id`、`user_id`、`role`。
+
+### 已登录
+
+任意已登录业务包会 **`touch_heartbeat()`**（不仅限于 HEARTBEAT）。
+
+- **HEARTBEAT**：`{ "op": "HEARTBEAT" }`  
+  - 回复 **201** `ok:true`、`op:"HEARTBEAT"`。  
+  - 服务器未解析额外字段（如自定义 `ts_ms` 仅客户端自用）。
+
+- **TRANSFER**：
+  - `mode`：`"unicast"` | `"broadcast"` | `"round_robin"` | `"roundrobin"`（后两者等价）
+  - `payload`：**bin 或 str**，透明出现在 **200** 帧 body 中
+  - `dst_user_id`：**单播**时若 Body 未提供或为 0，则使用 **Header** 的 `dst_user_id`；仍为 0 则 **201** 报错
+  - `interval_ms`：**轮流**时使用；`0` 表示使用配置 **`session.round_robin_default_interval_ms`**
+  - 接受后回复 **201** `ok:true`、`op:"TRANSFER"`（**不保证对端应用已读**）
+
+- **CONTROL**：
+  - `action: "list_users"` → **201** 含 `users`（`user_id`、`connections`）
+  - `action: "kick_user"` + `target_user_id` → 断开该用户所有连接，**201** 含 `kicked_count`
+
+**安全说明（当前实现）**：**CONTROL 不校验 `role=="control"`**，任意已登录连接均可调用 `list_users` / `kick_user`。若需限制，应在业务层或后续在服务器增加鉴权。
+
+### 每用户多连接（`user_deque_`）
+
+- 同一 `user_id` 可多条 TCP；超过 **`session.max_connections_per_user`** 时**踢掉最老**连接。
+- 新 **`control`** 登录会移除该用户已有的 **`control`** 连接，再入队。
+- **投递目标**（`pick_preferred`）：**优先非 control 的在线连接**，否则任选在线连接。
+
+## 配置项摘要
+
+见 `configs/dev/forwarder.json` 与 `include/fwd/config.hpp`：
+
+- `client.listen`（或兼容 `upstream.listen`）
+- `admin.listen`、`admin.events_max`
+- `threads.io`（**实际运行线程**）；`threads.biz` 可被读入配置但**当前未用于独立业务线程池**
+- `timeouts.read_ms`、`timeouts.idle_ms`
+- `limits.max_body_len`
+- `flow.send_queue.high_water_bytes`、`hard_limit_bytes`、`on_high_water`（`drop` | `disconnect`）
+- `metrics.interval_ms`
+- `session.*`：`max_connections_per_user`、`heartbeat_timeout_ms`、`round_robin_default_interval_ms`、`broadcast_max_recipients`

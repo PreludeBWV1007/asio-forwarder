@@ -10,28 +10,27 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/home/xuanrui/asio-forwarder/CMakeLists.txt"
   "CMakeFiles/3.31.6/CMakeCXXCompiler.cmake"
   "CMakeFiles/3.31.6/CMakeSystem.cmake"
-  "CMakeFiles/VerifyGlobs.cmake"
-  "CMakeFiles/cmake.verify_globs"
+  "_deps/msgpack_c-src/CMakeLists.txt"
+  "_deps/msgpack_c-src/Files.cmake"
+  "_deps/msgpack_c-src/msgpack-cxx-config.cmake.in"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/BasicConfigVersion-SameMajorVersion.cmake.in"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeCXXInformation.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeGenericSystem.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeInitializeConfigs.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeLanguageInformation.cmake"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakePackageConfigHelpers.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CheckCXXSourceCompiles.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CheckIncludeFileCXX.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/CheckLibraryExists.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Compiler/GNU-CXX.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Compiler/GNU.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FindPackageHandleStandardArgs.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FindPackageMessage.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FindProtobuf.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FindThreads.cmake"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/ExternalProject/shared_internal_commands.cmake"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FetchContent.cmake"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/FetchContent/CMakeLists.cmake.in"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/GNUInstallDirs.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Internal/CheckSourceCompiles.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Linker/GNU-CXX.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Linker/GNU.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Platform/Linker/GNU.cmake"
@@ -42,7 +41,7 @@ set(CMAKE_MAKEFILE_DEPENDS
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Platform/Linux-Initialize.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Platform/Linux.cmake"
   "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/Platform/UnixPaths.cmake"
-  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/SelectLibraryConfigurations.cmake"
+  "/usr/local/lib/python3.10/dist-packages/cmake/data/share/cmake-3.31/Modules/WriteBasicConfigVersionFile.cmake"
   )
 
 # The corresponding makefile is:
@@ -53,13 +52,14 @@ set(CMAKE_MAKEFILE_OUTPUTS
 
 # Byproducts of CMake generate step:
 set(CMAKE_MAKEFILE_PRODUCTS
+  "_deps/msgpack_c-subbuild/CMakeLists.txt"
   "CMakeFiles/CMakeDirectoryInformation.cmake"
+  "_deps/msgpack_c-build/msgpack-cxx-config.cmake"
+  "_deps/msgpack_c-build/msgpack-cxx-config-version.cmake"
+  "_deps/msgpack_c-build/CMakeFiles/CMakeDirectoryInformation.cmake"
   )
 
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
-  "CMakeFiles/market_proto.dir/DependInfo.cmake"
   "CMakeFiles/asio_forwarder.dir/DependInfo.cmake"
-  "CMakeFiles/proto_send.dir/DependInfo.cmake"
-  "CMakeFiles/proto_recv.dir/DependInfo.cmake"
   )

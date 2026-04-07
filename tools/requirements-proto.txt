@@ -1,3 +1,0 @@
-# 与 Ubuntu apt 自带的 protoc 3.12 生成的 *_pb2.py 兼容：勿用 5.x/6.x 的 Python protobuf（会报 Descriptors cannot be created）。
-# 若已升级 protoc ≥ 3.19 并重新生成 stubs，可再尝试放宽上界。
-protobuf>=3.19.0,<4

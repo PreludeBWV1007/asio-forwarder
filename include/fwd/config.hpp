@@ -1,12 +1,12 @@
 #pragma once
 
-// 本文件职责（配置结构）：
-// - Config：转发器运行时配置（监听端口/线程数/超时/包长限制/背压阈值/metrics 周期等）
-// - load_config_or_throw()：从 JSON 读取并校验配置（实现在 `src/main.cpp`）
-// 典型配置示例：`configs/dev/forwarder.json`
+// 配置：单端口对等客户端接入 + admin HTTP + 会话/转发策略
+// load_config_or_throw() 在 `src/main.cpp`
 
 #include <cstdint>
 #include <string>
+
+#include "fwd/session_policy.hpp"
 
 namespace fwd {
 
@@ -24,30 +24,30 @@ struct Config {
 
   struct Timeouts {
     int read_ms = 15000;
-    int idle_ms = 60000;
+    int idle_ms = 120000;
   };
 
   struct Limits {
-    std::uint32_t max_body_len = 64 * 1024 * 1024;  // 64MB（默认保守；可调，见配置校验上限）
+    std::uint32_t max_body_len = 64 * 1024 * 1024;
   };
 
   struct FlowControl {
-    std::uint32_t high_water_bytes = 64 * 1024 * 1024;    // 64MB 高水位
-    std::uint32_t hard_limit_bytes = 256 * 1024 * 1024;  // 256MB 硬上限
-    std::string on_high_water = "drop";                 // 高水位策略：drop | disconnect
+    std::uint32_t high_water_bytes = 64 * 1024 * 1024;
+    std::uint32_t hard_limit_bytes = 256 * 1024 * 1024;
+    std::string on_high_water = "drop";
   };
 
   struct Metrics {
     int interval_ms = 5000;
   };
 
-  Listen upstream_listen{.port = 9001};
-  Listen downstream_listen{.port = 9002};
+  Listen client_listen{.port = 9000};
   Admin admin{};
   Timeouts timeouts{};
   Limits limits{};
   FlowControl flow{};
   Metrics metrics{};
+  SessionPolicy session{};
 
   int io_threads = 2;
   int biz_threads = 2;
@@ -55,5 +55,4 @@ struct Config {
 
 Config load_config_or_throw(const std::string& path);
 
-}  // 命名空间 fwd
-
+}  // namespace fwd

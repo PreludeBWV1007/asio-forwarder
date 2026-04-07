@@ -77,8 +77,56 @@ CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=
 //Value Computed by CMake.
 CMAKE_FIND_PACKAGE_REDIRECTS_DIR:STATIC=/home/xuanrui/asio-forwarder/build/CMakeFiles/pkgRedirects
 
+//User executables (bin)
+CMAKE_INSTALL_BINDIR:PATH=bin
+
+//Read-only architecture-independent data (DATAROOTDIR)
+CMAKE_INSTALL_DATADIR:PATH=
+
+//Read-only architecture-independent data root (share)
+CMAKE_INSTALL_DATAROOTDIR:PATH=share
+
+//Documentation root (DATAROOTDIR/doc/PROJECT_NAME)
+CMAKE_INSTALL_DOCDIR:PATH=
+
+//C header files (include)
+CMAKE_INSTALL_INCLUDEDIR:PATH=include
+
+//Info documentation (DATAROOTDIR/info)
+CMAKE_INSTALL_INFODIR:PATH=
+
+//Object code libraries (lib)
+CMAKE_INSTALL_LIBDIR:PATH=lib
+
+//Program executables (libexec)
+CMAKE_INSTALL_LIBEXECDIR:PATH=libexec
+
+//Locale-dependent data (DATAROOTDIR/locale)
+CMAKE_INSTALL_LOCALEDIR:PATH=
+
+//Modifiable single-machine data (var)
+CMAKE_INSTALL_LOCALSTATEDIR:PATH=var
+
+//Man documentation (DATAROOTDIR/man)
+CMAKE_INSTALL_MANDIR:PATH=
+
+//C header files for non-gcc (/usr/include)
+CMAKE_INSTALL_OLDINCLUDEDIR:PATH=/usr/include
+
 //Install path prefix, prepended onto install directories.
 CMAKE_INSTALL_PREFIX:PATH=/usr/local
+
+//Run-time variable data (LOCALSTATEDIR/run)
+CMAKE_INSTALL_RUNSTATEDIR:PATH=
+
+//System admin executables (sbin)
+CMAKE_INSTALL_SBINDIR:PATH=sbin
+
+//Modifiable architecture-independent data (com)
+CMAKE_INSTALL_SHAREDSTATEDIR:PATH=com
+
+//Read-only single-machine data (etc)
+CMAKE_INSTALL_SYSCONFDIR:PATH=etc
 
 //Path to a program.
 CMAKE_LINKER:FILEPATH=/usr/bin/ld
@@ -189,6 +237,62 @@ CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
+//Directory under which to collect all populated content
+FETCHCONTENT_BASE_DIR:PATH=/home/xuanrui/asio-forwarder/build/_deps
+
+//Disables all attempts to download or update content and assumes
+// source dirs already exist
+FETCHCONTENT_FULLY_DISCONNECTED:BOOL=OFF
+
+//Enables QUIET option for all content population
+FETCHCONTENT_QUIET:BOOL=ON
+
+//When not empty, overrides where to find pre-populated content
+// for msgpack_c
+FETCHCONTENT_SOURCE_DIR_MSGPACK_C:PATH=
+
+//Enables UPDATE_DISCONNECTED behavior for all content population
+FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF
+
+//Enables UPDATE_DISCONNECTED behavior just for population of msgpack_c
+FETCHCONTENT_UPDATES_DISCONNECTED_MSGPACK_C:BOOL=OFF
+
+//32bit compile
+MSGPACK_32BIT:BOOL=OFF
+
+//Build msgpack examples
+MSGPACK_BUILD_EXAMPLES:BOOL=OFF
+
+//Build tests
+MSGPACK_BUILD_TESTS:BOOL=OFF
+
+//Char sign to use (signed or unsigned)
+MSGPACK_CHAR_SIGN:BOOL=OFF
+
+//Using c++11 compiler
+MSGPACK_CXX11:BOOL=OFF
+
+//Using c++14 compiler
+MSGPACK_CXX14:BOOL=OFF
+
+//Using c++17 compiler
+MSGPACK_CXX17:BOOL=OFF
+
+//Enable regression testing
+MSGPACK_FUZZ_REGRESSION:BOOL=OFF
+
+//Generate coverage report
+MSGPACK_GEN_COVERAGE:BOOL=OFF
+
+//Statically link with boost libraries
+MSGPACK_USE_STATIC_BOOST:BOOL=OFF
+
+//Enable the adaptor for std::variant
+MSGPACK_USE_STD_VARIANT_ADAPTOR:BOOL=OFF
+
+//Use Boost X3 parse
+MSGPACK_USE_X3_PARSE:BOOL=OFF
+
 //Path to a file.
 Protobuf_INCLUDE_DIR:PATH=/usr/include
 
@@ -221,6 +325,15 @@ asio_forwarder_IS_TOP_LEVEL:STATIC=ON
 
 //Value Computed by CMake
 asio_forwarder_SOURCE_DIR:STATIC=/home/xuanrui/asio-forwarder
+
+//Value Computed by CMake
+msgpack-cxx_BINARY_DIR:STATIC=/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build
+
+//Value Computed by CMake
+msgpack-cxx_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+msgpack-cxx_SOURCE_DIR:STATIC=/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-src
 
 
 ########################
@@ -294,8 +407,40 @@ CMAKE_HAVE_LIBC_PTHREAD:INTERNAL=1
 //Source directory with the top level CMakeLists.txt file for this
 // project
 CMAKE_HOME_DIRECTORY:INTERNAL=/home/xuanrui/asio-forwarder
+//ADVANCED property for variable: CMAKE_INSTALL_BINDIR
+CMAKE_INSTALL_BINDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DATADIR
+CMAKE_INSTALL_DATADIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DATAROOTDIR
+CMAKE_INSTALL_DATAROOTDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_DOCDIR
+CMAKE_INSTALL_DOCDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_INCLUDEDIR
+CMAKE_INSTALL_INCLUDEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_INFODIR
+CMAKE_INSTALL_INFODIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LIBDIR
+CMAKE_INSTALL_LIBDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LIBEXECDIR
+CMAKE_INSTALL_LIBEXECDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LOCALEDIR
+CMAKE_INSTALL_LOCALEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_LOCALSTATEDIR
+CMAKE_INSTALL_LOCALSTATEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_MANDIR
+CMAKE_INSTALL_MANDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_OLDINCLUDEDIR
+CMAKE_INSTALL_OLDINCLUDEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_RUNSTATEDIR
+CMAKE_INSTALL_RUNSTATEDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SBINDIR
+CMAKE_INSTALL_SBINDIR-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SHAREDSTATEDIR
+CMAKE_INSTALL_SHAREDSTATEDIR-ADVANCED:INTERNAL=1
 //Install .so files without execute permission.
 CMAKE_INSTALL_SO_NO_EXE:INTERNAL=1
+//ADVANCED property for variable: CMAKE_INSTALL_SYSCONFDIR
+CMAKE_INSTALL_SYSCONFDIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_LINKER
 CMAKE_LINKER-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MAKE_PROGRAM
@@ -313,7 +458,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=1
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=2
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -360,6 +505,12 @@ CMAKE_UNAME:INTERNAL=/usr/bin/uname
 CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
 //Details about finding Protobuf
 FIND_PACKAGE_MESSAGE_DETAILS_Protobuf:INTERNAL=[/usr/lib/x86_64-linux-gnu/libprotobuf.so][/usr/include][v3.12.4()]
+//Build Doxygen documentation
+MSGPACK_BUILD_DOCS:INTERNAL=OFF
+//Using c++20 compiler
+MSGPACK_CXX20:INTERNAL=ON
+//Use Boost libraried
+MSGPACK_USE_BOOST:INTERNAL=OFF
 //ADVANCED property for variable: Protobuf_INCLUDE_DIR
 Protobuf_INCLUDE_DIR-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: Protobuf_LIBRARY_DEBUG
@@ -380,4 +531,6 @@ Protobuf_PROTOC_LIBRARY_RELEASE-ADVANCED:INTERNAL=1
 _CMAKE_CXX_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
 //linker supports push/pop state
 _CMAKE_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
+//CMAKE_INSTALL_PREFIX during last run
+_GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=/usr/local
 

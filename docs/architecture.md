@@ -1,69 +1,54 @@
-# 架构与演进路线（asio-forwarder）
+# 架构说明（asio-forwarder / 对等中继）
 
-本文档描述 **当前已实现能力** 与 **规划中的产品形态**（消息中转 + 状态机），便于与业务方、管理方对齐预期。
+## 当前实现（C++，`src/main.cpp`）
 
-## 当前实现（本仓库）
+- **单业务端口** `client.listen`（JSON 亦兼容旧键 `upstream.listen`）：所有客户端对等接入，**无上游/下游之分**。
+- 每连接协程 **`TcpSession::read_loop`**：读 **40B v2 头** → 校验 magic/version/header_len → 读 `body_len` → **`RelayServer::handle_client_frame`**。
+- Body 为 **msgpack map**，按 **`op`**：**LOGIN**（首包）→ **HEARTBEAT / TRANSFER / CONTROL**。
+- **用户表**：`user_id → deque<TcpSession>`；多连接、超限踢最老、同用户新 `control` 替换旧 `control`。
+- **TRANSFER**：
+  - **unicast**：`pick_preferred(dst)` → 发 **200**；
+  - **broadcast**：除发送方外在线用户各一条（顺序为 `std::set` 用户 id），扇出上限 **`session.broadcast_max_recipients`**；
+  - **round_robin / roundrobin**：异步定时逐用户发 **200**。
+- **背压**：`TcpSession::send_frame`，每连接队列 + **`flow.send_queue.*`**（高水位 drop 或 disconnect，硬上限断连）。
+- **admin HTTP**（Boost.Beast）：仅 **GET**；`/` 未列出的路径返回 404。
+  - `/api/health`、`/health` → `{"ok":true}`
+  - `/api/stats` → JSON（sessions、users、frames、bytes、drops、pending_bytes 等）
+  - `/api/events` → JSON 事件数组（容量 `admin.events_max`）
+- **定时器**：`tick_metrics`（日志）、`tick_heartbeat`（已登录会话超时踢线）。
+- **依赖**：Boost.Asio/Beast；**msgpack-cxx**（CMake FetchContent，`MSGPACK_NO_BOOST`）。
 
-### 角色
+## 线程与配置注意
 
-| 组件 | 职责 |
+- **`threads.io`**：`main` 中创建多个 `std::thread` 调用 `io.run()`，共用一个 `io_context`。
+- **`threads.biz`**：`Config` 可从 JSON 读取，**当前工程未使用其启动独立业务线程池**（与实现不一致时以代码为准）。
+
+## Python 工具链（非 Web 自测 / 压测）
+
+```bash
+pip install -r tools/requirements-relay.txt
+export PYTHONPATH=tools
+```
+
+| 脚本 | 作用 |
 |------|------|
-| **Forwarder（C++ / Boost.Asio）** | TCP **一进多出**：单上游槽位读帧，向所有在线下游 **原样广播**；协议校验、读/空闲超时、下游按连接背压 |
-| **Web sidecar（Node.js）** | 监控大屏、调试发包、下游连接池模拟、SSE 推帧；**不参与**转发器数据面可靠性 |
+| `relay_proto.py` | v2 头 + msgpack 组帧/收包，与 C++ 一致 |
+| `relay_e2e_runner.py` | 最短 e2e：LOGIN + TRANSFER unicast + DELIVER 校验 |
+| `relay_test_suite.py` | 多场景：broadcast、round_robin、CONTROL、非法包断连等 |
+| `relay_cli.py` | **交互式**多连接、`send`/`flood`、`admin` 拉取、可选 `--spawn-server` |
 
-### 协议
+自动化：
 
-- 线格式：`Header(40B, v2)` + `Body`，小端。含 `src_user_id` / `dst_user_id` 与 `flags`（见 `docs/protocol.md`）。
-- 转发器 **不解析 Body**（Protobuf / Msgpack 等由业务端处理）。
+```bash
+cd build && ctest --output-on-failure
+./scripts/test_e2e.sh
+```
 
-### 稳定性机制（已实现）
+详见 **[`docs/testing.md`](testing.md)**。
 
-- 上游：单连接槽位；读 Header/Body 超时；空闲超时；非法头或超大 `body_len` 关连接。
-- 下游：每连接独立发送队列；高水位 `drop`/`disconnect`；硬上限强制断开。
-- 可观测：admin HTTP `/api/stats`、`/api/events`；周期 metrics 日志。
+## 相关文档
 
-### 代码与文档地图
-
-| 内容 | 位置 |
-|------|------|
-| 读帧、广播、背压 | `src/main.cpp` |
-| Header 定义 | `include/fwd/protocol.hpp` |
-| 组帧/读帧（POSIX 工具） | `include/fwd/frame_io.hpp` |
-| 配置 | `include/fwd/config.hpp`、`configs/dev/forwarder.json` |
-| 主链路详解 | `docs/data_flow.md` |
-| 设计取舍 | `docs/design.md` |
-
----
-
-## 规划方向（尚未在本仓库实现）
-
-以下与业务讨论一致，作为 **后续迭代目标**；实现时需改转发器逻辑与配置，而非仅改文档。
-
-### 服务器：中转 + 状态机
-
-- 服务器作为 **消息中转**，同时维护 **按 TCP 连接（或会话）的状态机**。
-- 典型状态/消息类别：
-  - **LOGIN**：登记用户、绑定连接、心跳契约（如客户端主动心跳、服务端应答；超时关连并告警）。
-  - **TRANSFER**：按 `dst_user_id` / 群组 / 广播 / 轮询等策略转发（当前代码为 **全量广播**，无按用户路由）。
-  - **CONTROL**：在线查询、踢连接、队列水位等管理操作（部分可通过现有 admin 扩展）。
-
-### 客户端：多 TCP 连接
-
-- 每用户 **多条连接有上限**（如默认 8，可配置）；超出策略可参考券商习惯：**踢最老连接**。
-- 多连接用于 **职责分离**（如控制面与数据面）与减轻队头阻塞，而非单纯堆连接解决消费慢；慢消费配合 **背压** 与队列上限。
-
-### 载荷：MessagePack
-
-- 外层帧仍用固定 Header；Body 推荐 **Msgpack**，单帧大小由 **`limits.max_body_len`** 约束。
-
-### 广播与轮询（策略定案，待编码）
-
-- **广播**：对扇出数量或总待发字节设 **上限**，超限截断并 **指标/日志**。
-- **轮询**：目标用户无在线连接时 **不入队**，**丢弃并可观测**（或明确错误路径）。
-
----
-
-## 版本与兼容
-
-- **v2 帧头** 与 v1 **不兼容**；所有官方工具与 sidecar 已与 v2 对齐。
-- 升级时需同步升级：上游/下游客户端、Python 工具、`web/server.js`、C++ `proto_send`/`proto_recv`。
+- [`docs/protocol.md`](protocol.md)：线格式与 msgpack 字段
+- [`docs/design.md`](design.md)：设计取舍
+- [`docs/data_flow.md`](data_flow.md)：读帧与转发路径
+- [`docs/testing.md`](testing.md)：测试与压测

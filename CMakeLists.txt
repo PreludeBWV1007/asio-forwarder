@@ -6,36 +6,24 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Protobuf REQUIRED)
-
-file(GLOB PROTO_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/proto/*.proto")
-list(SORT PROTO_FILES)
-if(NOT PROTO_FILES)
-  message(FATAL_ERROR "no .proto files under proto/")
-endif()
-
-protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILES})
-
-add_library(market_proto STATIC ${PROTO_SRCS} ${PROTO_HDRS})
-target_include_directories(market_proto PUBLIC "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(market_proto PUBLIC protobuf::libprotobuf)
+include(FetchContent)
+FetchContent_Declare(
+  msgpack_c
+  URL https://github.com/msgpack/msgpack-c/archive/refs/tags/cpp-6.1.1.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+set(MSGPACK_USE_BOOST OFF CACHE INTERNAL "")
+set(MSGPACK_CXX20 ON CACHE INTERNAL "")
+set(MSGPACK_BUILD_DOCS OFF CACHE INTERNAL "")
+FetchContent_MakeAvailable(msgpack_c)
 
 add_executable(asio_forwarder
   src/main.cpp
 )
 target_include_directories(asio_forwarder PRIVATE include)
 target_compile_options(asio_forwarder PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(asio_forwarder PRIVATE pthread boost_system)
-
-add_executable(proto_send src/proto_send.cpp)
-target_include_directories(proto_send PRIVATE include)
-target_compile_options(proto_send PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(proto_send PRIVATE market_proto)
-
-add_executable(proto_recv src/proto_recv.cpp)
-target_include_directories(proto_recv PRIVATE include)
-target_compile_options(proto_recv PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(proto_recv PRIVATE market_proto)
+target_link_libraries(asio_forwarder PRIVATE pthread boost_system msgpack-cxx)
+target_compile_definitions(asio_forwarder PRIVATE MSGPACK_NO_BOOST)
 
 enable_testing()
 add_test(
