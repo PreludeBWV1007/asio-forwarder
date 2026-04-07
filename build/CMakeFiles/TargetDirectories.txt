@@ -1,3 +1,7 @@
+/home/xuanrui/asio-forwarder/build/CMakeFiles/market_proto.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/asio_forwarder.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/proto_send.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/proto_recv.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/test.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/edit_cache.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/rebuild_cache.dir

@@ -5,7 +5,7 @@
 // - Forwarder：
 //   - start()：启动三类监听（upstream/downstream/admin）+ metrics 定时器
 //   - accept_upstream()/accept_downstream()：接受连接（上游为单连接槽位）
-//   - upstream_readloop()：按 “Header(24)+Body(body_len)” 读帧，校验后广播给所有下游
+//   - upstream_readloop()：按 “Header(40)+Body(body_len)” 读帧，校验后广播给所有下游
 //   - broadcast()：将同一份 frame（shared_ptr<string>）分发给所有下游，避免 N 份复制
 //   - admin 接口：/api/stats、/api/events（供 Web sidecar 大屏/SSE 使用）
 // - main()：读取配置路径，启动 io_context 线程池
@@ -53,7 +53,8 @@ std::string proto::Header::to_string() const {
   return "magic=" + std::to_string(magic) + " ver=" + std::to_string(version) +
          " hlen=" + std::to_string(header_len) + " blen=" + std::to_string(body_len) +
          " type=" + std::to_string(msg_type) + " flags=" + std::to_string(flags) +
-         " seq=" + std::to_string(seq);
+         " seq=" + std::to_string(seq) + " src_user=" + std::to_string(src_user_id) +
+         " dst_user=" + std::to_string(dst_user_id);
 }
 
 // ===== config impl =====
@@ -98,7 +99,9 @@ Config load_config_or_throw(const std::string& path) {
   if (cfg.io_threads < 1 || cfg.io_threads > 64) throw std::runtime_error("invalid threads.io");
   if (cfg.biz_threads < 1 || cfg.biz_threads > 64) throw std::runtime_error("invalid threads.biz");
   if (cfg.admin.events_max < 0 || cfg.admin.events_max > 10000) throw std::runtime_error("invalid admin.events_max");
-  if (cfg.limits.max_body_len == 0 || cfg.limits.max_body_len > 64u * 1024u * 1024u) throw std::runtime_error("invalid limits.max_body_len");
+  // 单帧 body 上限：配置可调；允许到 1GiB（仍远小于 u32 理论值），超大包需配合内存与运维策略。
+  constexpr std::uint32_t kMaxBodyLenCap = 1024u * 1024u * 1024u;
+  if (cfg.limits.max_body_len == 0 || cfg.limits.max_body_len > kMaxBodyLenCap) throw std::runtime_error("invalid limits.max_body_len");
   if (cfg.flow.high_water_bytes == 0 || cfg.flow.hard_limit_bytes < cfg.flow.high_water_bytes) throw std::runtime_error("invalid flow thresholds");
   if (!(cfg.flow.on_high_water == "drop" || cfg.flow.on_high_water == "disconnect")) throw std::runtime_error("invalid flow.send_queue.on_high_water");
   if (cfg.timeouts.read_ms < 100 || cfg.timeouts.idle_ms < cfg.timeouts.read_ms) throw std::runtime_error("invalid timeouts");

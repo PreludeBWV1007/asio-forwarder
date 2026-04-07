@@ -1,5 +1,5 @@
 {
-  "_comment": "开发环境配置（forwarder 本体）。结构：upstream.listen=上游入口（单连接槽位）；downstream.listen=下游入口（多连接广播）；admin.listen/events_max=本机只读监控接口；threads.io=Asio IO 线程数；timeouts.read_ms/idle_ms=读/空闲超时；limits.max_body_len=body 最大字节数（不含 24B header）；metrics.interval_ms=日志/统计周期；flow.send_queue.*=下游发送队列背压阈值与策略（高水位 drop/disconnect，硬上限强制断开）。",
+  "_comment": "开发环境配置（forwarder 本体）。结构：upstream.listen=上游入口（单连接槽位）；downstream.listen=下游入口（多连接广播）；admin.listen/events_max=本机只读监控接口；threads.io=Asio IO 线程数；timeouts.read_ms/idle_ms=读/空闲超时；limits.max_body_len=body 最大字节数（不含 40B header v2）；metrics.interval_ms=日志/统计周期；flow.send_queue.*=下游发送队列背压阈值与策略（高水位 drop/disconnect，硬上限强制断开）。",
   "upstream": {
     "listen": { "host": "0.0.0.0", "port": 19001, "backlog": 256 }
   },
@@ -12,10 +12,10 @@
   },
   "threads": { "io": 2, "biz": 2 },
   "timeouts": { "read_ms": 15000, "idle_ms": 60000 },
-  "limits": { "max_body_len": 4194304 },
+  "limits": { "max_body_len": 67108864 },
   "metrics": { "interval_ms": 5000 },
   "flow": {
-    "send_queue": { "high_water_bytes": 4194304, "hard_limit_bytes": 16777216, "on_high_water": "drop" }
+    "send_queue": { "high_water_bytes": 67108864, "hard_limit_bytes": 268435456, "on_high_water": "drop" }
   }
 }
 

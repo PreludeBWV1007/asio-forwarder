@@ -41,6 +41,14 @@
               <input id="fSeq" placeholder="例如 1" />
             </div>
             <div style="grid-column: span 3;">
+              <div class="hint">src_user_id（可空）</div>
+              <input id="fSrc" placeholder="u64 字符串" />
+            </div>
+            <div style="grid-column: span 3;">
+              <div class="hint">dst_user_id（可空）</div>
+              <input id="fDst" placeholder="u64 字符串" />
+            </div>
+            <div style="grid-column: span 3;">
               <div class="hint">body 预览</div>
               <select id="mode">
                 <option value="utf8">utf8</option>
@@ -70,8 +78,11 @@
                 <th style="width: 70px;">type</th>
                 <th style="width: 70px;">flags</th>
                 <th style="width: 70px;">seq</th>
+                <th style="width: 120px;">src_user</th>
+                <th style="width: 120px;">dst_user</th>
                 <th style="width: 90px;">body_len</th>
                 <th>body_preview</th>
+                <th style="width: 340px;">proto_preview</th>
               </tr>
             </thead>
             <tbody id="tbody"></tbody>
@@ -103,23 +114,35 @@
         function getFilters() {
           const t = document.getElementById('fType').value.trim();
           const s = document.getElementById('fSeq').value.trim();
-          return { type: t ? parseInt(t, 10) : null, seq: s ? parseInt(s, 10) : null };
+          const su = document.getElementById('fSrc').value.trim();
+          const du = document.getElementById('fDst').value.trim();
+          return {
+            type: t ? parseInt(t, 10) : null,
+            seq: s ? parseInt(s, 10) : null,
+            src: su || null,
+            dst: du || null,
+          };
         }
 
         function render() {
-          const { type, seq } = getFilters();
+          const { type, seq, src, dst } = getFilters();
           const mode = document.getElementById('mode').value;
           const maxRows = Math.max(20, Math.min(2000, parseInt(document.getElementById('maxRows').value || '200', 10)));
 
           const filtered = rows.filter(r => {
             if (type != null && r.header.msg_type !== type) return false;
             if (seq != null && r.header.seq !== seq) return false;
+            if (src != null && String(r.header.src_user_id || '') !== src) return false;
+            if (dst != null && String(r.header.dst_user_id || '') !== dst) return false;
             return true;
           }).slice(-maxRows).reverse();
 
           tbody.innerHTML = filtered.map(r => {
             const ts = new Date(r.ts_ms).toLocaleTimeString();
             const bytes = r.body_b64 ? b64ToBytes(r.body_b64) : new Uint8Array(0);
+            const protoPrev = (r.body_proto_preview != null && String(r.body_proto_preview).trim())
+              ? String(r.body_proto_preview)
+              : '';
             // 最多展示 4KB，兼顾“可读性”和页面性能。
             // 采用 UTF-8 边界安全截断，避免中英文等多字节字符在截断处出现乱码。
             const prev = mode === 'hex' ? bytesToHex(bytes, 4096) : bytesToUtf8Safe(bytes, 4096);
@@ -128,8 +151,11 @@
               <td>${r.header.msg_type}</td>
               <td>${r.header.flags}</td>
               <td>${r.header.seq}</td>
+              <td class="mono small">${r.header.src_user_id != null ? r.header.src_user_id : ''}</td>
+              <td class="mono small">${r.header.dst_user_id != null ? r.header.dst_user_id : ''}</td>
               <td>${r.body_len}</td>
               <td title="base64=${r.body_b64 || ''}">${prev.replace(/</g,'&lt;')}</td>
+              <td title="${protoPrev.replace(/"/g,'&quot;')}">${protoPrev.replace(/</g,'&lt;')}</td>
             </tr>`;
           }).join('');
         }
@@ -140,6 +166,8 @@
         });
         document.getElementById('fType').addEventListener('input', render);
         document.getElementById('fSeq').addEventListener('input', render);
+        document.getElementById('fSrc').addEventListener('input', render);
+        document.getElementById('fDst').addEventListener('input', render);
         document.getElementById('mode').addEventListener('change', render);
         document.getElementById('maxRows').addEventListener('change', render);
 

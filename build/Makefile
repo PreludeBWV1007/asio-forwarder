@@ -65,6 +65,16 @@ CMAKE_BINARY_DIR = /home/xuanrui/asio-forwarder/build
 #=============================================================================
 # Targets provided globally by CMake.
 
+# Special rule for the target test
+test:
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running tests..."
+	/usr/local/lib/python3.10/dist-packages/cmake/data/bin/ctest --force-new-ctest-process $(ARGS)
+.PHONY : test
+
+# Special rule for the target test
+test/fast: test
+.PHONY : test/fast
+
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "No interactive CMake dialog available..."
@@ -113,8 +123,22 @@ preinstall/fast:
 
 # clear depends
 depend:
+	$(CMAKE_COMMAND) -P /home/xuanrui/asio-forwarder/build/CMakeFiles/VerifyGlobs.cmake
 	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 1
 .PHONY : depend
+
+#=============================================================================
+# Target rules for targets named market_proto
+
+# Build rule for target.
+market_proto: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 market_proto
+.PHONY : market_proto
+
+# fast build rule for target.
+market_proto/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/market_proto.dir/build.make CMakeFiles/market_proto.dir/build
+.PHONY : market_proto/fast
 
 #=============================================================================
 # Target rules for targets named asio_forwarder
@@ -128,6 +152,56 @@ asio_forwarder: cmake_check_build_system
 asio_forwarder/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/build
 .PHONY : asio_forwarder/fast
+
+#=============================================================================
+# Target rules for targets named proto_send
+
+# Build rule for target.
+proto_send: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 proto_send
+.PHONY : proto_send
+
+# fast build rule for target.
+proto_send/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_send.dir/build.make CMakeFiles/proto_send.dir/build
+.PHONY : proto_send/fast
+
+#=============================================================================
+# Target rules for targets named proto_recv
+
+# Build rule for target.
+proto_recv: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 proto_recv
+.PHONY : proto_recv
+
+# fast build rule for target.
+proto_recv/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_recv.dir/build.make CMakeFiles/proto_recv.dir/build
+.PHONY : proto_recv/fast
+
+market.pb.o: market.pb.cc.o
+.PHONY : market.pb.o
+
+# target to build an object file
+market.pb.cc.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/market_proto.dir/build.make CMakeFiles/market_proto.dir/market.pb.cc.o
+.PHONY : market.pb.cc.o
+
+market.pb.i: market.pb.cc.i
+.PHONY : market.pb.i
+
+# target to preprocess a source file
+market.pb.cc.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/market_proto.dir/build.make CMakeFiles/market_proto.dir/market.pb.cc.i
+.PHONY : market.pb.cc.i
+
+market.pb.s: market.pb.cc.s
+.PHONY : market.pb.s
+
+# target to generate assembly for a file
+market.pb.cc.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/market_proto.dir/build.make CMakeFiles/market_proto.dir/market.pb.cc.s
+.PHONY : market.pb.cc.s
 
 src/main.o: src/main.cpp.o
 .PHONY : src/main.o
@@ -153,6 +227,54 @@ src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/src/main.cpp.s
 .PHONY : src/main.cpp.s
 
+src/proto_recv.o: src/proto_recv.cpp.o
+.PHONY : src/proto_recv.o
+
+# target to build an object file
+src/proto_recv.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_recv.dir/build.make CMakeFiles/proto_recv.dir/src/proto_recv.cpp.o
+.PHONY : src/proto_recv.cpp.o
+
+src/proto_recv.i: src/proto_recv.cpp.i
+.PHONY : src/proto_recv.i
+
+# target to preprocess a source file
+src/proto_recv.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_recv.dir/build.make CMakeFiles/proto_recv.dir/src/proto_recv.cpp.i
+.PHONY : src/proto_recv.cpp.i
+
+src/proto_recv.s: src/proto_recv.cpp.s
+.PHONY : src/proto_recv.s
+
+# target to generate assembly for a file
+src/proto_recv.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_recv.dir/build.make CMakeFiles/proto_recv.dir/src/proto_recv.cpp.s
+.PHONY : src/proto_recv.cpp.s
+
+src/proto_send.o: src/proto_send.cpp.o
+.PHONY : src/proto_send.o
+
+# target to build an object file
+src/proto_send.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_send.dir/build.make CMakeFiles/proto_send.dir/src/proto_send.cpp.o
+.PHONY : src/proto_send.cpp.o
+
+src/proto_send.i: src/proto_send.cpp.i
+.PHONY : src/proto_send.i
+
+# target to preprocess a source file
+src/proto_send.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_send.dir/build.make CMakeFiles/proto_send.dir/src/proto_send.cpp.i
+.PHONY : src/proto_send.cpp.i
+
+src/proto_send.s: src/proto_send.cpp.s
+.PHONY : src/proto_send.s
+
+# target to generate assembly for a file
+src/proto_send.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/proto_send.dir/build.make CMakeFiles/proto_send.dir/src/proto_send.cpp.s
+.PHONY : src/proto_send.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -161,10 +283,23 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... test"
 	@echo "... asio_forwarder"
+	@echo "... market_proto"
+	@echo "... proto_recv"
+	@echo "... proto_send"
+	@echo "... market.pb.o"
+	@echo "... market.pb.i"
+	@echo "... market.pb.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
+	@echo "... src/proto_recv.o"
+	@echo "... src/proto_recv.i"
+	@echo "... src/proto_recv.s"
+	@echo "... src/proto_send.o"
+	@echo "... src/proto_send.i"
+	@echo "... src/proto_send.s"
 .PHONY : help
 
 
@@ -176,6 +311,7 @@ help:
 # No rule that depends on this can have commands that come from listfiles
 # because they might be regenerated.
 cmake_check_build_system:
+	$(CMAKE_COMMAND) -P /home/xuanrui/asio-forwarder/build/CMakeFiles/VerifyGlobs.cmake
 	$(CMAKE_COMMAND) -S$(CMAKE_SOURCE_DIR) -B$(CMAKE_BINARY_DIR) --check-build-system CMakeFiles/Makefile.cmake 0
 .PHONY : cmake_check_build_system
 

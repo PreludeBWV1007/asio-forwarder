@@ -52,15 +52,71 @@
               <input id="seq" type="number" value="1" />
             </div>
             <div style="grid-column: span 4;">
+              <div class="hint">src_user_id（u64，十进制字符串）</div>
+              <input id="srcUserId" type="text" value="0" placeholder="0" />
+            </div>
+            <div style="grid-column: span 4;">
+              <div class="hint">dst_user_id（u64，十进制字符串）</div>
+              <input id="dstUserId" type="text" value="0" placeholder="0" />
+            </div>
+            <div style="grid-column: span 4;">
               <div class="hint">body 编码</div>
               <select id="enc">
                 <option value="utf8">utf8</option>
                 <option value="hex">hex</option>
+                <option value="protobuf_stock_quote">protobuf:StockQuote</option>
+                <option value="protobuf_heartbeat">protobuf:Heartbeat</option>
+                <option value="protobuf_market_payload">protobuf:MarketPayload(oneof)</option>
               </select>
             </div>
-            <div style="grid-column: span 8;">
-              <div class="hint">body</div>
+            <div id="bodyWrap" style="grid-column: span 8;">
+              <div class="hint">body（utf8/hex）</div>
               <input id="body" type="text" value="hello-from-web" />
+            </div>
+
+            <div id="protoWrap" style="grid-column: span 12; display:none;">
+              <div style="height: 6px;"></div>
+              <div class="hint">Protobuf 字段（将自动编码为 bytes）</div>
+              <div style="height: 10px;"></div>
+              <div class="grid" style="grid-template-columns: repeat(12, 1fr); gap: 10px;">
+                <div style="grid-column: span 4;">
+                  <div class="hint">StockQuote.symbol</div>
+                  <input id="sq_symbol" type="text" value="600000.SH" />
+                </div>
+                <div style="grid-column: span 4;">
+                  <div class="hint">StockQuote.last_price</div>
+                  <input id="sq_price" type="number" value="10.5" step="0.01" />
+                </div>
+                <div style="grid-column: span 4;">
+                  <div class="hint">StockQuote.volume</div>
+                  <input id="sq_volume" type="number" value="1000000" />
+                </div>
+                <div style="grid-column: span 4;">
+                  <div class="hint">StockQuote.ts_ms</div>
+                  <input id="sq_ts_ms" type="number" value="" placeholder="留空=now" />
+                </div>
+                <div style="grid-column: span 4;">
+                  <div class="hint">StockQuote.exchange</div>
+                  <input id="sq_exchange" type="text" value="SSE" />
+                </div>
+
+                <div style="grid-column: span 4;">
+                  <div class="hint">Heartbeat.node_id</div>
+                  <input id="hb_node_id" type="text" value="web-1" />
+                </div>
+                <div style="grid-column: span 4;">
+                  <div class="hint">Heartbeat.ts_ms</div>
+                  <input id="hb_ts_ms" type="number" value="" placeholder="留空=now" />
+                </div>
+
+                <div style="grid-column: span 4;">
+                  <div class="hint">MarketPayload.oneof 内部类型</div>
+                  <select id="mp_inner">
+                    <option value="stock_quote">stock_quote</option>
+                    <option value="heartbeat">heartbeat</option>
+                  </select>
+                </div>
+              </div>
             </div>
           </div>
           <div style="height: 10px;"></div>
@@ -95,6 +151,22 @@
           logEl.textContent = logs.join('\n');
         }
 
+        function syncUi() {
+          const enc = document.getElementById('enc').value;
+          const bodyWrap = document.getElementById('bodyWrap');
+          const protoWrap = document.getElementById('protoWrap');
+          const msgTypeEl = document.getElementById('msgType');
+
+          const isProto = enc.startsWith('protobuf_');
+          bodyWrap.style.display = isProto ? 'none' : 'block';
+          protoWrap.style.display = isProto ? 'block' : 'none';
+
+          if (!isProto) return;
+          if (enc === 'protobuf_stock_quote') msgTypeEl.value = '100';
+          else if (enc === 'protobuf_heartbeat') msgTypeEl.value = '101';
+          else msgTypeEl.value = '102';
+        }
+
         async function refreshStatus() {
           try {
             const r = await fetch('/api/upstream/status', { cache: 'no-store' });
@@ -105,22 +177,86 @@
           }
         }
 
+        document.getElementById('enc').addEventListener('change', syncUi);
+        syncUi();
+
         document.getElementById('btnSend').addEventListener('click', async () => {
           const msg_type = parseInt(document.getElementById('msgType').value || '100', 10);
           const flags = parseInt(document.getElementById('flags').value || '0', 10);
           const seq = parseInt(document.getElementById('seq').value || '1', 10);
+          const src_user_id = String(document.getElementById('srcUserId').value || '0').trim() || '0';
+          const dst_user_id = String(document.getElementById('dstUserId').value || '0').trim() || '0';
           const body_encoding = document.getElementById('enc').value;
-          const body = document.getElementById('body').value || '';
+
+          const isProto = body_encoding.startsWith('protobuf_');
+          const nowMs = () => Date.now();
+
+          let fetchPath = '/api/upstream/send';
+          let payload = { msg_type, flags, seq, src_user_id, dst_user_id };
+
+          if (!isProto) {
+            const body = document.getElementById('body').value || '';
+            payload = { msg_type, flags, seq, src_user_id, dst_user_id, body_encoding, body };
+            fetchPath = '/api/upstream/send';
+          } else {
+            let proto_kind = 'stock_quote';
+            if (body_encoding === 'protobuf_stock_quote') proto_kind = 'stock_quote';
+            else if (body_encoding === 'protobuf_heartbeat') proto_kind = 'heartbeat';
+            else proto_kind = 'market_payload';
+
+            const safeInt = (el) => {
+              const v = String(el.value || '').trim();
+              if (!v) return String(nowMs());
+              // 这里保持为字符串：更安全地携带 int64（JS number 精度问题）
+              return v;
+            };
+
+            const stock_quote = {
+              symbol: String(document.getElementById('sq_symbol').value || ''),
+              last_price: Number(document.getElementById('sq_price').value || 0),
+              volume: String(document.getElementById('sq_volume').value || '0'),
+              ts_ms: safeInt(document.getElementById('sq_ts_ms')),
+              exchange: String(document.getElementById('sq_exchange').value || ''),
+            };
+
+            const heartbeat = {
+              ts_ms: safeInt(document.getElementById('hb_ts_ms')),
+              node_id: String(document.getElementById('hb_node_id').value || ''),
+            };
+
+            if (proto_kind === 'stock_quote') {
+              payload = { msg_type, flags, seq, src_user_id, dst_user_id, proto_kind, data: stock_quote };
+            } else if (proto_kind === 'heartbeat') {
+              payload = { msg_type, flags, seq, src_user_id, dst_user_id, proto_kind, data: heartbeat };
+            } else {
+              const inner = String(document.getElementById('mp_inner').value || 'stock_quote');
+              payload = {
+                msg_type,
+                flags,
+                seq,
+                src_user_id,
+                dst_user_id,
+                proto_kind,
+                data: {
+                  inner,
+                  stock_quote,
+                  heartbeat,
+                },
+              };
+            }
+            fetchPath = '/api/upstream/send_protobuf';
+          }
 
           try {
-            const r = await fetch('/api/upstream/send', {
+            const r = await fetch(fetchPath, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ msg_type, flags, seq, body_encoding, body }),
+              body: JSON.stringify(payload),
             });
             const js = await r.json();
             const ok = !!js.ok;
-            pushLog(`${new Date().toLocaleTimeString()} ok=${ok} type=${msg_type} flags=${flags} seq=${seq} len=${body.length} enc=${body_encoding} ${js.error ? ' err=' + js.error : ''}`);
+            const len = (js.sent && js.sent.body_len != null) ? js.sent.body_len : (isProto ? '-' : payload.body.length);
+            pushLog(`${new Date().toLocaleTimeString()} ok=${ok} type=${msg_type} flags=${flags} seq=${seq} len=${len} enc=${body_encoding} ${js.error ? ' err=' + js.error : ''}`);
             if (!ok && js.detail) pushLog(`  detail: ${js.detail}`);
             if (js.warning) pushLog(`  warning: ${js.warning}`);
           } catch (e) {

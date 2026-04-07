@@ -12,7 +12,7 @@
 
 ### 非目标（当前版本不做）
 
-- 业务解码/编码（MsgPack/Protobuf 等）
+- 在转发器进程内做业务解码/编码（MsgPack/Protobuf 等；Body 对转发器仍为不透明字节）
 - 按 topic/type 的复杂路由与订阅
 - TLS、鉴权、租户隔离、持久化
 
@@ -42,10 +42,10 @@ sidecar 是“可视化与调试入口”，不参与业务转发链路本身：
 
 ## 数据模型：Frame（协议帧）
 
-Forwarder 处理的基本单位是 **Frame = Header(24B) + Body(body_len)**：
+Forwarder 处理的基本单位是 **Frame = Header(40B, v2) + Body(body_len)**：
 
-- Header 为固定 24 字节（小端），包含 magic/version/header_len/body_len/msg_type/flags/seq。
-- Body 为原始二进制载荷（未来可承载序列化后的 bytes）。
+- Header 为固定 40 字节（小端），包含 magic/version/header_len/body_len/msg_type/flags/seq/**src_user_id**/**dst_user_id**。
+- Body 为原始二进制载荷（Msgpack / Protobuf 等由业务约定）。
 
 Header 的存在用于：
 
@@ -53,7 +53,7 @@ Header 的存在用于：
 - **解决粘包/半包**（body_len：先读满 header，再读满 body）
 - **扩展预留字段**（msg_type/flags/seq）
 
-协议细节参见 `docs/protocol.md`。
+协议细节参见 `docs/protocol.md`；路线图参见 `docs/architecture.md`。
 
 ## 核心数据流（从上游到下游）
 
@@ -61,7 +61,7 @@ Header 的存在用于：
 
 1. 接受一条 upstream TCP 连接（新连接会关闭旧连接）
 2. 循环读取：
-   - 读满 24B Header（带读超时）
+   - 读满 40B Header（带读超时）
    - 校验 Header（magic/version/header_len）
    - 校验 body_len（不得超过 `limits.max_body_len`）
    - 读满 body_len 字节 Body（带读超时）
@@ -130,7 +130,7 @@ sidecar 将这些数据做成：
 
 建议按“层”扩展，避免把业务逻辑塞进 IO 层：
 
-- **协议层**：在 Body 上引入 MsgPack/Protobuf，并保持 Header 不变或做版本升级
+- **协议层**：外层 Header 已为 **v2（40B）**；Body 推荐 Msgpack，Protobuf 仍可作为示例（`proto/market.proto`、`docs/protobuf.md`）
 - **路由层**：按 msg_type/topic/account 做下游分发（从“全量广播”演进到“条件转发”）
 - **安全层**：TLS + 鉴权 + 多租户隔离
 - **性能层**：

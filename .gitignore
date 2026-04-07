@@ -1,0 +1,5 @@
+build/
+web/node_modules/
+tools/generated/*_pb2.py
+tools/generated/__pycache__/
+tools/generated/*.pyc

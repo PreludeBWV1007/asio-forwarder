@@ -28,12 +28,12 @@ struct Config {
   };
 
   struct Limits {
-    std::uint32_t max_body_len = 4 * 1024 * 1024;  // 4MB
+    std::uint32_t max_body_len = 64 * 1024 * 1024;  // 64MB（默认保守；可调，见配置校验上限）
   };
 
   struct FlowControl {
-    std::uint32_t high_water_bytes = 4 * 1024 * 1024;   // 4MB
-    std::uint32_t hard_limit_bytes = 16 * 1024 * 1024;  // 16MB
+    std::uint32_t high_water_bytes = 64 * 1024 * 1024;    // 64MB 高水位
+    std::uint32_t hard_limit_bytes = 256 * 1024 * 1024;  // 256MB 硬上限
     std::string on_high_water = "drop";                 // 高水位策略：drop | disconnect
   };
 

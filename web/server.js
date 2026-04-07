@@ -9,7 +9,7 @@
   - /api/upstream/send：将网页输入打包为协议帧并写入 upstream
 - downstream（收包展示）：
   - connectDownstream()/downstreamPool：sidecar 主动创建若干条下游 TCP 连接用于接收广播数据
-  - parseFramesFromSocket()：按 Header(24)+Body 解析帧，body 以 base64 形式给前端
+  - parseFramesFromSocket()：按 Header(40,v2)+Body 解析帧，body 以 base64 形式给前端
   - /api/downstream/stream：SSE 推送帧到浏览器（可按 conn_id 过滤）
 - admin 代理：
   - /api/stats、/api/events：从 forwarder 的 admin 端口拉取并转发给前端页面
@@ -18,10 +18,20 @@ const express = require('express');
 const fetch = require('node-fetch');
 const net = require('net');
 const path = require('path');
+const protobuf = require('protobufjs');
 
 const MAGIC = 0x44574641;
-const VERSION = 1;
-const HEADER_LEN = 24;
+const VERSION = 2;
+const HEADER_LEN = 40;
+
+function parseU64Json(v, def = '0') {
+  if (v == null || v === '') return def;
+  try {
+    return BigInt(String(v)).toString();
+  } catch {
+    return def;
+  }
+}
 
 function envInt(name, def) {
   const v = process.env[name];
@@ -47,6 +57,96 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---- sidecar state ----
+// Protobuf 载荷：用 protobufjs 运行时加载同一份 proto/market.proto
+// 目的：在 Web 页面直接发送/解码“结构体 -> bytes”的效果。
+let marketProtoRoot = null;
+let StockQuoteType = null;
+let HeartbeatType = null;
+let MarketPayloadType = null;
+let marketProtoLoadError = '';
+
+function safeLoadMarketProto() {
+  try {
+    const protoPath = path.join(__dirname, '..', 'proto', 'market.proto');
+    marketProtoRoot = protobuf.loadSync(protoPath);
+    StockQuoteType = marketProtoRoot.lookupType('fwd.market.StockQuote');
+    HeartbeatType = marketProtoRoot.lookupType('fwd.market.Heartbeat');
+    MarketPayloadType = marketProtoRoot.lookupType('fwd.market.MarketPayload');
+    marketProtoLoadError = '';
+  } catch (e) {
+    marketProtoLoadError = String(e && e.message ? e.message : e);
+  }
+}
+
+safeLoadMarketProto();
+
+const WireMsgType = {
+  STOCK_QUOTE: 100,
+  HEARTBEAT: 101,
+  MARKET_PAYLOAD: 102,
+};
+
+function toProtoPreview(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    // 限制长度，避免 UI / SSE 被超大消息拖慢
+    return s.length > 800 ? s.slice(0, 800) + '…' : s;
+  } catch (e) {
+    return null;
+  }
+}
+
+function decodeBodyByMsgType(msgType, bodyBuf) {
+  if (!marketProtoRoot) return null;
+  try {
+    const v2s = (v) => {
+      if (v == null) return '';
+      if (typeof v === 'object' && typeof v.toString === 'function') return v.toString();
+      return String(v);
+    };
+
+    if (msgType === WireMsgType.STOCK_QUOTE) {
+      const m = StockQuoteType.decode(bodyBuf);
+      const out = {
+        symbol: m.symbol,
+        last_price: m.lastPrice,
+        volume: v2s(m.volume),
+        ts_ms: v2s(m.tsMs),
+        exchange: m.exchange,
+      };
+      return { type: 'StockQuote', preview: toProtoPreview(out) };
+    }
+    if (msgType === WireMsgType.HEARTBEAT) {
+      const m = HeartbeatType.decode(bodyBuf);
+      const out = { ts_ms: v2s(m.tsMs), node_id: m.nodeId };
+      return { type: 'Heartbeat', preview: toProtoPreview(out) };
+    }
+    if (msgType === WireMsgType.MARKET_PAYLOAD) {
+      const mp = MarketPayloadType.decode(bodyBuf);
+      // protobufjs oneof：我们用字段存在与否来判断。
+      const out = { inner: null };
+      if (mp.stockQuote) {
+        out.inner = 'stock_quote';
+        out.stock_quote = {
+          symbol: mp.stockQuote.symbol,
+          last_price: mp.stockQuote.lastPrice,
+          volume: v2s(mp.stockQuote.volume),
+          ts_ms: v2s(mp.stockQuote.tsMs),
+          exchange: mp.stockQuote.exchange,
+        };
+      }
+      if (mp.heartbeat) {
+        out.inner = 'heartbeat';
+        out.heartbeat = { ts_ms: v2s(mp.heartbeat.tsMs), node_id: mp.heartbeat.nodeId };
+      }
+      return { type: 'MarketPayload', preview: toProtoPreview(out) };
+    }
+  } catch (e) {
+    return { type: 'unknown', preview: null, error: String(e && e.message ? e.message : e) };
+  }
+  return null;
+}
+
 let upstreamSock = null;
 let upstreamConnecting = false;
 let upstreamConnectedAtMs = 0;
@@ -146,7 +246,7 @@ function ensureUpstreamConnected(cb) {
   });
 }
 
-function packHeader(bodyLen, msgType, flags, seq) {
+function packHeader(bodyLen, msgType, flags, seq, srcUserIdStr = '0', dstUserIdStr = '0') {
   const b = Buffer.alloc(HEADER_LEN);
   b.writeUInt32LE(MAGIC >>> 0, 0);
   b.writeUInt16LE(VERSION, 4);
@@ -155,6 +255,17 @@ function packHeader(bodyLen, msgType, flags, seq) {
   b.writeUInt32LE((msgType >>> 0), 12);
   b.writeUInt32LE((flags >>> 0), 16);
   b.writeUInt32LE((seq >>> 0), 20);
+  let src = 0n;
+  let dst = 0n;
+  try {
+    src = BigInt(String(srcUserIdStr));
+    dst = BigInt(String(dstUserIdStr));
+  } catch {
+    src = 0n;
+    dst = 0n;
+  }
+  b.writeBigUInt64LE(src, 24);
+  b.writeBigUInt64LE(dst, 32);
   return b;
 }
 
@@ -183,12 +294,14 @@ function parseFramesFromSocket(sock, connId, onFrame, onBadHeader) {
         const msg_type = chunk.readUInt32LE(12);
         const flags = chunk.readUInt32LE(16);
         const seq = chunk.readUInt32LE(20);
+        const src_user_id = chunk.readBigUInt64LE(24).toString();
+        const dst_user_id = chunk.readBigUInt64LE(32).toString();
         if (magic !== MAGIC || ver !== VERSION || hlen !== HEADER_LEN) {
           onBadHeader(`invalid_header magic=${magic} ver=${ver} hlen=${hlen}`);
           sock.destroy();
           return;
         }
-        currentHeader = { magic, ver, hlen, blen, msg_type, flags, seq };
+        currentHeader = { magic, ver, hlen, blen, msg_type, flags, seq, src_user_id, dst_user_id };
         want = blen;
         if (want === 0) {
           onFrame({ ts_ms: nowMs(), conn_id: connId, header: currentHeader, body_b64: '', body_len: 0 });
@@ -197,12 +310,15 @@ function parseFramesFromSocket(sock, connId, onFrame, onBadHeader) {
         }
       } else {
         const body = chunk;
+        const decoded = decodeBodyByMsgType(currentHeader.msg_type, body);
         onFrame({
           ts_ms: nowMs(),
           conn_id: connId,
           header: currentHeader,
           body_len: body.length,
           body_b64: body.toString('base64'),
+          body_proto_type: decoded ? decoded.type : null,
+          body_proto_preview: decoded ? decoded.preview : null,
         });
         currentHeader = null;
         want = HEADER_LEN;
@@ -402,6 +518,8 @@ app.post('/api/upstream/send', async (req, res) => {
   const msg_type = (body.msg_type >>> 0) || 100;
   const flags = (body.flags >>> 0) || 0;
   const seq = (body.seq >>> 0) || 1;
+  const src_user_id = parseU64Json(body.src_user_id, '0');
+  const dst_user_id = parseU64Json(body.dst_user_id, '0');
   const encoding = body.body_encoding || 'utf8';
 
   let payload = Buffer.alloc(0);
@@ -415,14 +533,107 @@ app.post('/api/upstream/send', async (req, res) => {
 
   ensureUpstreamConnected((err, sock) => {
     if (err) return res.status(502).json({ error: 'upstream_connect_failed', detail: String(err.message || err) });
-    const hdr = packHeader(payload.length, msg_type, flags, seq);
+    const hdr = packHeader(payload.length, msg_type, flags, seq, src_user_id, dst_user_id);
     const out = Buffer.concat([hdr, payload]);
     sock.write(out, (e) => {
       if (e) return res.status(502).json({ error: 'upstream_write_failed', detail: String(e.message || e) });
       res.json({
         ok: true,
-        sent: { msg_type, flags, seq, body_len: payload.length, body_encoding: encoding },
+        sent: { msg_type, flags, seq, src_user_id, dst_user_id, body_len: payload.length, body_encoding: encoding },
         warning: '注意：sidecar 的上游连接会踢掉其他上游连接（调试模式）。',
+      });
+    });
+  });
+});
+
+// Protobuf 载荷发送：浏览器填“结构体字段(JSON)”，sidecar 编码为 Protobuf bytes 写入 upstream。
+app.post('/api/upstream/send_protobuf', async (req, res) => {
+  const body = req.body || {};
+  const flags = (body.flags >>> 0) || 0;
+  const seq = (body.seq >>> 0) || 1;
+  const src_user_id = parseU64Json(body.src_user_id, '0');
+  const dst_user_id = parseU64Json(body.dst_user_id, '0');
+  const proto_kind = String(body.proto_kind || '');
+  const data = body.data || {};
+
+  if (!marketProtoRoot) {
+    return res.status(500).json({ error: 'protobuf_unavailable', detail: marketProtoLoadError || 'failed_to_load_proto' });
+  }
+
+  let msg_type = (body.msg_type >>> 0) || 0;
+  let type = null;
+  let payload = {};
+
+  const toInt64 = (v) => {
+    const Long = protobuf.util.Long;
+    if (v == null) return Long.fromNumber(0);
+    if (Long.isLong(v)) return v;
+    if (typeof v === 'number') return Long.fromNumber(v);
+    // protobufjs int64（Long）可由十进制字符串构造
+    return Long.fromString(String(v));
+  };
+
+  try {
+    if (proto_kind === 'stock_quote') {
+      msg_type = msg_type || WireMsgType.STOCK_QUOTE;
+      type = StockQuoteType;
+      payload = {
+        symbol: String(data.symbol || ''),
+        lastPrice: Number(data.last_price != null ? data.last_price : 0),
+        volume: toInt64(data.volume != null ? data.volume : 0),
+        tsMs: toInt64(data.ts_ms != null ? data.ts_ms : 0),
+        exchange: String(data.exchange || ''),
+      };
+    } else if (proto_kind === 'heartbeat') {
+      msg_type = msg_type || WireMsgType.HEARTBEAT;
+      type = HeartbeatType;
+      payload = {
+        tsMs: toInt64(data.ts_ms != null ? data.ts_ms : 0),
+        nodeId: String(data.node_id || ''),
+      };
+    } else if (proto_kind === 'market_payload') {
+      msg_type = msg_type || WireMsgType.MARKET_PAYLOAD;
+      type = MarketPayloadType;
+      const inner = String(data.inner || 'stock_quote');
+      if (inner === 'stock_quote') {
+        payload = {
+          stockQuote: {
+            symbol: String(data.stock_quote && data.stock_quote.symbol ? data.stock_quote.symbol : ''),
+            lastPrice: Number(data.stock_quote && data.stock_quote.last_price != null ? data.stock_quote.last_price : 0),
+            volume: toInt64(data.stock_quote && data.stock_quote.volume != null ? data.stock_quote.volume : 0),
+            tsMs: toInt64(data.stock_quote && data.stock_quote.ts_ms != null ? data.stock_quote.ts_ms : 0),
+            exchange: String(data.stock_quote && data.stock_quote.exchange ? data.stock_quote.exchange : ''),
+          },
+        };
+      } else {
+        payload = {
+          heartbeat: {
+            tsMs: toInt64(data.heartbeat && data.heartbeat.ts_ms != null ? data.heartbeat.ts_ms : 0),
+            nodeId: String(data.heartbeat && data.heartbeat.node_id ? data.heartbeat.node_id : ''),
+          },
+        };
+      }
+    } else {
+      return res.status(400).json({ error: 'invalid_proto_kind', detail: 'use stock_quote|heartbeat|market_payload' });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'invalid_fields', detail: String(e && e.message ? e.message : e) });
+  }
+
+  const verifyErr = type.verify(payload);
+  if (verifyErr) return res.status(400).json({ error: 'proto_verify_failed', detail: verifyErr });
+
+  const buf = Buffer.from(type.encode(payload).finish());
+
+  ensureUpstreamConnected((err, sock) => {
+    if (err) return res.status(502).json({ error: 'upstream_connect_failed', detail: String(err.message || err) });
+    const hdr = packHeader(buf.length, msg_type, flags, seq, src_user_id, dst_user_id);
+    const out = Buffer.concat([hdr, buf]);
+    sock.write(out, (e) => {
+      if (e) return res.status(502).json({ error: 'upstream_write_failed', detail: String(e.message || e) });
+      res.json({
+        ok: true,
+        sent: { msg_type, flags, seq, src_user_id, dst_user_id, body_len: buf.length, proto_kind },
       });
     });
   });
