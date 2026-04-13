@@ -8,7 +8,7 @@
     "events_max": 200
   },
   "threads": { "io": 2, "biz": 2 },
-  "timeouts": { "read_ms": 15000, "idle_ms": 120000 },
+  "timeouts": { "read_ms": 120000, "idle_ms": 600000 },
   "limits": { "max_body_len": 67108864 },
   "metrics": { "interval_ms": 5000 },
   "flow": {

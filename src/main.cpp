@@ -924,6 +924,11 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     std::string role = map_get_str(mp, "role").value_or("data");
     if (role != "control" && role != "data") role = "data";
     apply_login(from, *uid, role == "control");
+    fwd::log::write(fwd::log::Level::kInfo,
+                    "login ok conn=" + std::to_string(from->conn_id()) + " ep=" + from->endpoint_str() +
+                        " user_id=" + std::to_string(*uid) + " role=" + role + " seq=" + std::to_string(wire_h.seq));
+    push_event(fwd::log::Level::kInfo,
+               "login ok conn=" + std::to_string(from->conn_id()) + " user_id=" + std::to_string(*uid) + " role=" + role);
     msgpack::sbuffer buf;
     msgpack::packer<msgpack::sbuffer> pk(&buf);
     pk.pack_map(5);
@@ -944,6 +949,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
   from->touch_heartbeat();
 
   if (*op == "HEARTBEAT") {
+    fwd::log::write(fwd::log::Level::kDebug,
+                    "heartbeat conn=" + std::to_string(from->conn_id()) + " user_id=" + std::to_string(from->user_id()) +
+                        " seq=" + std::to_string(wire_h.seq));
     msgpack::sbuffer buf;
     msgpack::packer<msgpack::sbuffer> pk(&buf);
     pk.pack_map(2);
@@ -960,6 +968,11 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     const auto* pay_obj = map_get_obj(mp, "payload");
     auto payload = extract_payload_bin(pay_obj);
     if (!payload) {
+      fwd::log::write(fwd::log::Level::kWarn,
+                      "transfer reject missing payload conn=" + std::to_string(from->conn_id()) +
+                          " user_id=" + std::to_string(from->user_id()) + " mode=" + mode +
+                          " seq=" + std::to_string(wire_h.seq));
+      push_event(fwd::log::Level::kWarn, "transfer reject missing payload user_id=" + std::to_string(from->user_id()));
       msgpack::sbuffer eb;
       msgpack::packer<msgpack::sbuffer> pk(&eb);
       pk.pack_map(2);
@@ -974,6 +987,10 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     int interval_ms = static_cast<int>(map_get_u64(mp, "interval_ms").value_or(0));
     if (mode == "unicast") {
       if (dst == 0) {
+        fwd::log::write(fwd::log::Level::kWarn,
+                        "transfer reject unicast missing dst conn=" + std::to_string(from->conn_id()) +
+                            " user_id=" + std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
+        push_event(fwd::log::Level::kWarn, "transfer reject unicast missing dst user_id=" + std::to_string(from->user_id()));
         msgpack::sbuffer eb;
         msgpack::packer<msgpack::sbuffer> pk(&eb);
         pk.pack_map(2);
@@ -984,12 +1001,29 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
         send_reply(from, eb, wire_h.seq);
         co_return;
       }
+      fwd::log::write(fwd::log::Level::kInfo,
+                      "transfer unicast conn=" + std::to_string(from->conn_id()) + " src=" +
+                          std::to_string(from->user_id()) + " dst=" + std::to_string(dst) +
+                          " bytes=" + std::to_string(payload->size()) + " seq=" + std::to_string(wire_h.seq));
       deliver_unicast(from->user_id(), dst, *payload, wire_h.seq);
     } else if (mode == "broadcast") {
+      fwd::log::write(fwd::log::Level::kInfo,
+                      "transfer broadcast conn=" + std::to_string(from->conn_id()) + " src=" +
+                          std::to_string(from->user_id()) + " bytes=" + std::to_string(payload->size()) +
+                          " seq=" + std::to_string(wire_h.seq));
       deliver_broadcast(from->user_id(), *payload, wire_h.seq);
     } else if (mode == "round_robin" || mode == "roundrobin") {
+      fwd::log::write(fwd::log::Level::kInfo,
+                      "transfer round_robin conn=" + std::to_string(from->conn_id()) + " src=" +
+                          std::to_string(from->user_id()) + " bytes=" + std::to_string(payload->size()) +
+                          " interval_ms=" + std::to_string(interval_ms) + " seq=" + std::to_string(wire_h.seq));
       schedule_round_robin(from->user_id(), *payload, wire_h.seq, interval_ms);
     } else {
+      fwd::log::write(fwd::log::Level::kWarn,
+                      "transfer reject unknown mode conn=" + std::to_string(from->conn_id()) + " user_id=" +
+                          std::to_string(from->user_id()) + " mode=" + mode + " seq=" + std::to_string(wire_h.seq));
+      push_event(fwd::log::Level::kWarn,
+                 "transfer reject unknown mode user_id=" + std::to_string(from->user_id()) + " mode=" + mode);
       msgpack::sbuffer eb;
       msgpack::packer<msgpack::sbuffer> pk(&eb);
       pk.pack_map(2);
@@ -1014,6 +1048,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
   if (*op == "CONTROL") {
     const auto action = map_get_str(mp, "action").value_or("");
     if (action == "list_users") {
+      fwd::log::write(fwd::log::Level::kInfo,
+                      "control list_users conn=" + std::to_string(from->conn_id()) + " user_id=" +
+                          std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
       std::lock_guard lk(mu_);
       msgpack::sbuffer buf;
       msgpack::packer<msgpack::sbuffer> pk(&buf);
@@ -1037,6 +1074,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     if (action == "kick_user") {
       const auto target = map_get_u64(mp, "target_user_id");
       if (!target) {
+        fwd::log::write(fwd::log::Level::kWarn,
+                        "control kick_user reject missing target conn=" + std::to_string(from->conn_id()) +
+                            " user_id=" + std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
         msgpack::sbuffer eb;
         msgpack::packer<msgpack::sbuffer> pk(&eb);
         pk.pack_map(2);
@@ -1047,6 +1087,12 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
         send_reply(from, eb, wire_h.seq);
         co_return;
       }
+      fwd::log::write(fwd::log::Level::kWarn,
+                      "control kick_user conn=" + std::to_string(from->conn_id()) + " by_user_id=" +
+                          std::to_string(from->user_id()) + " target_user_id=" + std::to_string(*target) +
+                          " seq=" + std::to_string(wire_h.seq));
+      push_event(fwd::log::Level::kWarn,
+                 "kick_user by=" + std::to_string(from->user_id()) + " target=" + std::to_string(*target));
       std::vector<std::shared_ptr<TcpSession>> victims;
       {
         std::lock_guard lk(mu_);
@@ -1067,6 +1113,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
       send_reply(from, buf, wire_h.seq);
       co_return;
     }
+    fwd::log::write(fwd::log::Level::kWarn,
+                    "control reject unknown action conn=" + std::to_string(from->conn_id()) + " user_id=" +
+                        std::to_string(from->user_id()) + " action=" + action + " seq=" + std::to_string(wire_h.seq));
     msgpack::sbuffer eb;
     msgpack::packer<msgpack::sbuffer> pk(&eb);
     pk.pack_map(2);
@@ -1078,6 +1127,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     co_return;
   }
 
+  fwd::log::write(fwd::log::Level::kWarn,
+                  "reject unknown op conn=" + std::to_string(from->conn_id()) + " user_id=" +
+                      std::to_string(from->user_id()) + " op=" + *op + " seq=" + std::to_string(wire_h.seq));
   msgpack::sbuffer eb;
   msgpack::packer<msgpack::sbuffer> pk(&eb);
   pk.pack_map(2);

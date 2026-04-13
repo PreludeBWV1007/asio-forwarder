@@ -93,6 +93,10 @@ class RelayConn:
         self.sock: Optional[socket.socket] = None
         self.user_id: int = 0
         self.role: str = "data"
+        self.logged_in: bool = False
+        # 每连接心跳间隔（秒）；None 表示不自动心跳
+        self.hb_interval_s: Optional[float] = 5.0
+        self._next_hb_ms: int = 0
         self._rx_th: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self.inbox: "queue.Queue[tuple[str, Any]]" = queue.Queue()
@@ -112,6 +116,8 @@ class RelayConn:
         self._stop.set()
         s = self.sock
         self.sock = None
+        self.logged_in = False
+        self.stats.inflight.clear()
         if s is not None:
             try:
                 s.shutdown(socket.SHUT_RDWR)
@@ -150,6 +156,11 @@ class RelayConn:
                 self.stats.errors += 1
                 self.stats.last_error = f"rx error: {e!r}"
                 self.inbox.put(("closed", self.stats.last_error))
+                # 确保 UI 状态从 UP 变为 DOWN，避免“假 UP”
+                try:
+                    self.close()
+                except Exception:
+                    pass
                 break
 
             self.stats.frames_in += 1
@@ -171,6 +182,8 @@ class RelayConn:
                 if seq and seq in self.stats.inflight:
                     sent_ms = self.stats.inflight.pop(seq)
                     self.stats.rtt_samples_ms.append(_now_ms() - sent_ms)
+                if isinstance(obj, dict) and obj.get("ok") is True and obj.get("op") == "LOGIN":
+                    self.logged_in = True
                 self.inbox.put(("reply", (h, obj)))
             else:
                 self.inbox.put(("frame", (h, body_raw)))
@@ -185,6 +198,10 @@ class RelayCLI:
         self._seq = 1
         self._print_lock = threading.Lock()
         self._running = True
+        # 默认自动心跳（每连接可覆盖/关闭）
+        self._default_hb_interval_s: Optional[float] = 5.0
+        self._hb_th = threading.Thread(target=self._hb_loop, name="hb", daemon=True)
+        self._hb_th.start()
 
         self._pump_th = threading.Thread(target=self._pump_loop, name="pump", daemon=True)
         self._pump_th.start()
@@ -213,12 +230,20 @@ class RelayCLI:
                         h, raw = payload
                         preview = raw[:120]
                         tail = "..." if len(raw) > len(preview) else ""
+                        mp_obj = None
+                        try:
+                            mp_obj = msgpack.unpackb(raw, raw=False)
+                        except Exception:
+                            mp_obj = None
                         self._p(
                             f"[DELIVER] conn={c.name} src={h.get('src_user_id')} dst={h.get('dst_user_id')} seq={h.get('seq')} "
-                            f"len={len(raw)} preview={preview!r}{tail}"
+                            f"len={len(raw)} preview={preview!r}{tail}" + (f" obj={mp_obj}" if mp_obj is not None else "")
                         )
                     elif typ == "reply":
                         h, obj = payload
+                        # 降噪：自动心跳会频繁收到 ACK，默认不打印（避免刷屏影响交互输入）。
+                        if isinstance(obj, dict) and obj.get("ok") is True and obj.get("op") == "HEARTBEAT":
+                            continue
                         self._p(f"[REPLY]   conn={c.name} seq={h.get('seq')} body={obj}")
                     elif typ == "closed":
                         self._p(f"[CLOSED]  conn={c.name} {payload}")
@@ -227,6 +252,32 @@ class RelayCLI:
                         self._p(f"[FRAME]   conn={c.name} type={h.get('msg_type')} seq={h.get('seq')} len={len(raw)}")
             if not any_msg:
                 time.sleep(0.03)
+
+    def _hb_loop(self) -> None:
+        while self._running:
+            now = _now_ms()
+            # 细粒度调度，避免所有连接同一时刻心跳
+            time.sleep(0.2)
+            if not self._running:
+                break
+            for c in list(self.conns.values()):
+                if not c.is_connected() or not c.logged_in:
+                    continue
+                if c.hb_interval_s is None or c.hb_interval_s <= 0:
+                    continue
+                if c._next_hb_ms == 0:
+                    c._next_hb_ms = now + int(c.hb_interval_s * 1000)
+                    continue
+                if now < c._next_hb_ms:
+                    continue
+                try:
+                    seq = self._next_seq()
+                    c.send_msgpack({"op": "HEARTBEAT"}, seq=seq)
+                except Exception:
+                    # 不刷屏；错误会在 rx_loop/下一次操作时体现
+                    pass
+                finally:
+                    c._next_hb_ms = now + int(c.hb_interval_s * 1000)
 
     def help(self) -> None:
         self._p(
@@ -237,18 +288,25 @@ class RelayCLI:
                     "  quit / exit",
                     "",
                     "连接管理：",
-                    "  connect <name>                 # 建立 TCP 连接（未登录）",
+                    "  connect <name> [hb_s]          # 建立 TCP 连接（未登录）；可选每连接心跳秒数",
                     "  close <name>                   # 关闭连接",
                     "  list                            # 列出连接及状态",
                     "",
                     "登录与心跳：",
-                    "  login <name> <user_id> [role=data|control]",
+                    "  login <name> <user_id> [role=data|control] [hb_s]   # 可选覆盖心跳秒数",
                     "  hb <name>",
+                    "  sethb <name> <hb_s|off>         # 动态修改自动心跳；off 表示关闭",
                     "",
                     "转发（payload 支持: 文本 / @文件 / hex:...）：",
                     "  send <from> unicast <dst_user_id> <payload>",
                     "  send <from> broadcast <payload>",
                     "  send <from> round_robin <interval_ms> <payload>",
+                    "",
+                    "对象/结构体（msgpack）转发：",
+                    "  sendmp <from> unicast <dst_user_id> <json>",
+                    "  sendmp <from> broadcast <json>",
+                    "  sendmp <from> round_robin <interval_ms> <json>",
+                    "    - json: 标准 JSON 字符串（会被解析为对象，再用 msgpack 打包成 payload(bin)）",
                     "",
                     "控制面（SERVER_REPLY）：",
                     "  ctl <from> list_users",
@@ -264,6 +322,9 @@ class RelayCLI:
                     "  flood <from> round_robin <interval_ms> <count> <bytes> [window=64]",
                     "    - bytes: 每条 payload 大小（随机填充）",
                     "    - window: 允许在途 seq 数（越大越压）",
+                    "",
+                    "辅助：",
+                    "  wait <seconds>                 # 仅等待（便于观察异步打印）",
                 ]
             )
         )
@@ -274,9 +335,12 @@ class RelayCLI:
         return self.conns[name]
 
     def cmd_connect(self, name: str) -> None:
+        # connect <name> [hb_s] 在 _dispatch 解析
         if name in self.conns and self.conns[name].is_connected():
             raise RuntimeError(f"{name} already connected")
         c = self.conns.get(name) or RelayConn(name, self.host, self.port)
+        if c.hb_interval_s is None:
+            c.hb_interval_s = self._default_hb_interval_s
         c.connect()
         self.conns[name] = c
         self._p(f"OK connected {name} -> {self.host}:{self.port}")
@@ -301,6 +365,26 @@ class RelayCLI:
         seq = self._next_seq()
         c.send_msgpack({"op": "LOGIN", "user_id": c.user_id, "role": role}, seq=seq)
         self._p(f"OK sent LOGIN on {name} seq={seq}")
+    def cmd_sethb(self, name: str, hb: str) -> None:
+        c = self._get(name)
+        if hb.lower() == "off":
+            c.hb_interval_s = None
+            c._next_hb_ms = 0
+            self._p(f"OK sethb {name}=off")
+            return
+        try:
+            v = float(hb)
+        except Exception:
+            raise RuntimeError("sethb <name> <hb_s|off>")
+        if v <= 0:
+            c.hb_interval_s = None
+            c._next_hb_ms = 0
+            self._p(f"OK sethb {name}=off")
+            return
+        c.hb_interval_s = v
+        c._next_hb_ms = 0
+        self._p(f"OK sethb {name}={v}s")
+
 
     def cmd_hb(self, name: str) -> None:
         c = self._get(name)
@@ -331,6 +415,37 @@ class RelayCLI:
         else:
             raise RuntimeError(f"unknown mode: {mode}")
         self._p(f"OK sent TRANSFER({mode}) from {from_name} seq={seq}")
+
+    def cmd_sendmp(self, from_name: str, mode: str, args: list[str]) -> None:
+        """
+        sendmp：把 JSON 解析为对象，再 msgpack 打包进 TRANSFER.payload（bin）。
+        这是“方式 A”的直接操作入口：payload = msgpack(struct/object bytes)。
+        """
+        c = self._get(from_name)
+        seq = self._next_seq()
+        if mode == "unicast":
+            if len(args) < 2:
+                raise RuntimeError("sendmp unicast needs: <dst_user_id> <json>")
+            dst = int(args[0])
+            obj = json.loads(args[1])
+            payload = msgpack.packb(obj, use_bin_type=True)
+            c.send_msgpack({"op": "TRANSFER", "mode": "unicast", "dst_user_id": dst, "payload": payload}, seq=seq)
+        elif mode == "broadcast":
+            if len(args) < 1:
+                raise RuntimeError("sendmp broadcast needs: <json>")
+            obj = json.loads(args[0])
+            payload = msgpack.packb(obj, use_bin_type=True)
+            c.send_msgpack({"op": "TRANSFER", "mode": "broadcast", "payload": payload}, seq=seq)
+        elif mode in ("round_robin", "roundrobin"):
+            if len(args) < 2:
+                raise RuntimeError("sendmp round_robin needs: <interval_ms> <json>")
+            interval_ms = int(args[0])
+            obj = json.loads(args[1])
+            payload = msgpack.packb(obj, use_bin_type=True)
+            c.send_msgpack({"op": "TRANSFER", "mode": "round_robin", "interval_ms": interval_ms, "payload": payload}, seq=seq)
+        else:
+            raise RuntimeError(f"unknown mode: {mode}")
+        self._p(f"OK sent TRANSFER({mode}) msgpack(payload) from {from_name} seq={seq}")
 
     def cmd_ctl(self, from_name: str, action: str, args: list[str]) -> None:
         c = self._get(from_name)
@@ -480,6 +595,9 @@ class RelayCLI:
                 continue
             try:
                 self._dispatch(line)
+            except EOFError:
+                # quit/exit
+                break
             except Exception as e:
                 self._p(f"ERR {e}")
 
@@ -488,6 +606,9 @@ class RelayCLI:
             c.close()
 
     def _dispatch(self, line: str) -> None:
+        # 支持脚本注释（行首 #）
+        if line.lstrip().startswith("#"):
+            return
         parts = shlex.split(line)
         if not parts:
             return
@@ -498,9 +619,19 @@ class RelayCLI:
         if cmd == "help":
             return self.help()
         if cmd == "connect":
-            if len(args) != 1:
-                raise RuntimeError("connect <name>")
-            return self.cmd_connect(args[0])
+            if len(args) < 1 or len(args) > 2:
+                raise RuntimeError("connect <name> [hb_s]")
+            name = args[0]
+            hb_s = args[1] if len(args) == 2 else None
+            c = self.conns.get(name) or RelayConn(name, self.host, self.port)
+            if hb_s is None:
+                c.hb_interval_s = self._default_hb_interval_s
+            elif hb_s.lower() == "off":
+                c.hb_interval_s = None
+            else:
+                c.hb_interval_s = float(hb_s)
+            self.conns[name] = c
+            return self.cmd_connect(name)
         if cmd == "close":
             if len(args) != 1:
                 raise RuntimeError("close <name>")
@@ -509,11 +640,23 @@ class RelayCLI:
             return self.cmd_list()
         if cmd == "login":
             if len(args) < 2:
-                raise RuntimeError("login <name> <user_id> [role]")
+                raise RuntimeError("login <name> <user_id> [role] [hb_s]")
             role = args[2] if len(args) >= 3 else "data"
             if role not in ("data", "control"):
                 role = "data"
+            if len(args) >= 4:
+                hb_s = args[3]
+                if hb_s.lower() == "off":
+                    self._get(args[0]).hb_interval_s = None
+                    self._get(args[0])._next_hb_ms = 0
+                else:
+                    self._get(args[0]).hb_interval_s = float(hb_s)
+                    self._get(args[0])._next_hb_ms = 0
             return self.cmd_login(args[0], int(args[1]), role)
+        if cmd == "sethb":
+            if len(args) != 2:
+                raise RuntimeError("sethb <name> <hb_s|off>")
+            return self.cmd_sethb(args[0], args[1])
         if cmd == "hb":
             if len(args) != 1:
                 raise RuntimeError("hb <name>")
@@ -522,6 +665,10 @@ class RelayCLI:
             if len(args) < 2:
                 raise RuntimeError("send <from> <mode> ...")
             return self.cmd_send(args[0], args[1], args[2:])
+        if cmd == "sendmp":
+            if len(args) < 2:
+                raise RuntimeError("sendmp <from> <mode> ...")
+            return self.cmd_sendmp(args[0], args[1], args[2:])
         if cmd == "ctl":
             if len(args) < 2:
                 raise RuntimeError("ctl <from> <action> ...")
@@ -532,6 +679,11 @@ class RelayCLI:
             if len(args) != 1:
                 raise RuntimeError("admin health|stats|events")
             return self.cmd_admin(args[0])
+        if cmd == "wait":
+            if len(args) != 1:
+                raise RuntimeError("wait <seconds>")
+            time.sleep(float(args[0]))
+            return
         if cmd == "flood":
             if len(args) < 2:
                 raise RuntimeError("flood <from> <mode> ...")
