@@ -1,4 +1,8 @@
 /home/xuanrui/asio-forwarder/build/CMakeFiles/asio_forwarder.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/asio_forwarder_sdk.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/dispatcher_cpp.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/worker_cpp.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/admin_cpp.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/test.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/edit_cache.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/rebuild_cache.dir

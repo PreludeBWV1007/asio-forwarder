@@ -64,11 +64,19 @@ CMAKE_BINARY_DIR = /home/xuanrui/asio-forwarder/build
 
 # The main recursive "all" target.
 all: CMakeFiles/asio_forwarder.dir/all
+all: CMakeFiles/asio_forwarder_sdk.dir/all
+all: CMakeFiles/dispatcher_cpp.dir/all
+all: CMakeFiles/worker_cpp.dir/all
+all: CMakeFiles/admin_cpp.dir/all
 all: _deps/msgpack_c-build/all
 .PHONY : all
 
 # The main recursive "codegen" target.
 codegen: CMakeFiles/asio_forwarder.dir/codegen
+codegen: CMakeFiles/asio_forwarder_sdk.dir/codegen
+codegen: CMakeFiles/dispatcher_cpp.dir/codegen
+codegen: CMakeFiles/worker_cpp.dir/codegen
+codegen: CMakeFiles/admin_cpp.dir/codegen
 codegen: _deps/msgpack_c-build/codegen
 .PHONY : codegen
 
@@ -78,6 +86,10 @@ preinstall: _deps/msgpack_c-build/preinstall
 
 # The main recursive "clean" target.
 clean: CMakeFiles/asio_forwarder.dir/clean
+clean: CMakeFiles/asio_forwarder_sdk.dir/clean
+clean: CMakeFiles/dispatcher_cpp.dir/clean
+clean: CMakeFiles/worker_cpp.dir/clean
+clean: CMakeFiles/admin_cpp.dir/clean
 clean: _deps/msgpack_c-build/clean
 .PHONY : clean
 
@@ -107,7 +119,7 @@ _deps/msgpack_c-build/clean:
 CMakeFiles/asio_forwarder.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=1,2 "Built target asio_forwarder"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=3,4 "Built target asio_forwarder"
 .PHONY : CMakeFiles/asio_forwarder.dir/all
 
 # Build rule for subdir invocation for target.
@@ -124,13 +136,141 @@ asio_forwarder: CMakeFiles/asio_forwarder.dir/rule
 # codegen rule for target.
 CMakeFiles/asio_forwarder.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=1,2 "Finished codegen for target asio_forwarder"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=3,4 "Finished codegen for target asio_forwarder"
 .PHONY : CMakeFiles/asio_forwarder.dir/codegen
 
 # clean rule for target.
 CMakeFiles/asio_forwarder.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/clean
 .PHONY : CMakeFiles/asio_forwarder.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/asio_forwarder_sdk.dir
+
+# All Build rule for target.
+CMakeFiles/asio_forwarder_sdk.dir/all:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=5,6 "Built target asio_forwarder_sdk"
+.PHONY : CMakeFiles/asio_forwarder_sdk.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/asio_forwarder_sdk.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 2
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/asio_forwarder_sdk.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 0
+.PHONY : CMakeFiles/asio_forwarder_sdk.dir/rule
+
+# Convenience name for target.
+asio_forwarder_sdk: CMakeFiles/asio_forwarder_sdk.dir/rule
+.PHONY : asio_forwarder_sdk
+
+# codegen rule for target.
+CMakeFiles/asio_forwarder_sdk.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=5,6 "Finished codegen for target asio_forwarder_sdk"
+.PHONY : CMakeFiles/asio_forwarder_sdk.dir/codegen
+
+# clean rule for target.
+CMakeFiles/asio_forwarder_sdk.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/clean
+.PHONY : CMakeFiles/asio_forwarder_sdk.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/dispatcher_cpp.dir
+
+# All Build rule for target.
+CMakeFiles/dispatcher_cpp.dir/all: CMakeFiles/asio_forwarder_sdk.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=7,8 "Built target dispatcher_cpp"
+.PHONY : CMakeFiles/dispatcher_cpp.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/dispatcher_cpp.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 4
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/dispatcher_cpp.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 0
+.PHONY : CMakeFiles/dispatcher_cpp.dir/rule
+
+# Convenience name for target.
+dispatcher_cpp: CMakeFiles/dispatcher_cpp.dir/rule
+.PHONY : dispatcher_cpp
+
+# codegen rule for target.
+CMakeFiles/dispatcher_cpp.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=7,8 "Finished codegen for target dispatcher_cpp"
+.PHONY : CMakeFiles/dispatcher_cpp.dir/codegen
+
+# clean rule for target.
+CMakeFiles/dispatcher_cpp.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/clean
+.PHONY : CMakeFiles/dispatcher_cpp.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/worker_cpp.dir
+
+# All Build rule for target.
+CMakeFiles/worker_cpp.dir/all: CMakeFiles/asio_forwarder_sdk.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=9,10 "Built target worker_cpp"
+.PHONY : CMakeFiles/worker_cpp.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/worker_cpp.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 4
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/worker_cpp.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 0
+.PHONY : CMakeFiles/worker_cpp.dir/rule
+
+# Convenience name for target.
+worker_cpp: CMakeFiles/worker_cpp.dir/rule
+.PHONY : worker_cpp
+
+# codegen rule for target.
+CMakeFiles/worker_cpp.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=9,10 "Finished codegen for target worker_cpp"
+.PHONY : CMakeFiles/worker_cpp.dir/codegen
+
+# clean rule for target.
+CMakeFiles/worker_cpp.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/clean
+.PHONY : CMakeFiles/worker_cpp.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/admin_cpp.dir
+
+# All Build rule for target.
+CMakeFiles/admin_cpp.dir/all: CMakeFiles/asio_forwarder_sdk.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=1,2 "Built target admin_cpp"
+.PHONY : CMakeFiles/admin_cpp.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/admin_cpp.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 4
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/admin_cpp.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/xuanrui/asio-forwarder/build/CMakeFiles 0
+.PHONY : CMakeFiles/admin_cpp.dir/rule
+
+# Convenience name for target.
+admin_cpp: CMakeFiles/admin_cpp.dir/rule
+.PHONY : admin_cpp
+
+# codegen rule for target.
+CMakeFiles/admin_cpp.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=1,2 "Finished codegen for target admin_cpp"
+.PHONY : CMakeFiles/admin_cpp.dir/codegen
+
+# clean rule for target.
+CMakeFiles/admin_cpp.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/clean
+.PHONY : CMakeFiles/admin_cpp.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

@@ -4,7 +4,7 @@
 
 目标：
 - 在一个终端里创建/关闭多个客户端连接
-- 对每条连接执行 LOGIN/HEARTBEAT/TRANSFER/CONTROL
+- 对每条连接执行 login(1)/heartbeat(2)/control(3)/data(4) 帧
 - 实时打印收到的 DELIVER/SERVER_REPLY，并汇总统计（吞吐、错误、延迟）
 - 可选：一键拉起本地 build/asio_forwarder（--spawn-server）
 
@@ -35,7 +35,19 @@ from typing import Any, Optional
 
 import msgpack
 
-from relay_proto import MSG_DELIVER, MSG_SERVER_REPLY, pack_frame_msgpack, recv_frame, recv_frame_msgpack
+from relay_proto import (
+    MSG_CLIENT_CONTROL,
+    MSG_CLIENT_DATA,
+    MSG_CLIENT_HEARTBEAT,
+    MSG_CLIENT_LOGIN,
+    MSG_DELIVER,
+    MSG_KICK,
+    MSG_SERVER_REPLY,
+    pack_frame_msgpack,
+    recv_frame,
+    recv_frame_msgpack,
+    unpack_deliver_body,
+)
 
 
 def _now_ms() -> int:
@@ -92,7 +104,9 @@ class RelayConn:
         self.port = port
         self.sock: Optional[socket.socket] = None
         self.user_id: int = 0
-        self.role: str = "data"
+        self.username: str = ""
+        self.peer_role: str = "user"
+        self.conn_id: int = 0
         self.logged_in: bool = False
         # 每连接心跳间隔（秒）；None 表示不自动心跳
         self.hb_interval_s: Optional[float] = 5.0
@@ -140,8 +154,8 @@ class RelayConn:
         self.stats.frames_out += 1
         self.stats.bytes_out += len(frame)
 
-    def send_msgpack(self, obj: dict, *, seq: int = 0) -> None:
-        frame = pack_frame_msgpack(obj, seq=seq)
+    def send_msgpack(self, obj: dict, *, seq: int = 0, msg_type: int = 0) -> None:
+        frame = pack_frame_msgpack(obj, seq=seq, msg_type=msg_type)
         self._send(frame, seq=seq)
 
     def _rx_loop(self) -> None:
@@ -169,6 +183,12 @@ class RelayConn:
             if mt == MSG_DELIVER:
                 self.stats.deliver_in += 1
                 self.inbox.put(("deliver", (h, body_raw)))
+            elif mt == MSG_KICK:
+                try:
+                    kobj = msgpack.unpackb(body_raw, raw=False) if body_raw else {}
+                except Exception:
+                    kobj = {}
+                self.inbox.put(("kick", (h, kobj)))
             elif mt == MSG_SERVER_REPLY:
                 self.stats.replies_in += 1
                 try:
@@ -184,6 +204,10 @@ class RelayConn:
                     self.stats.rtt_samples_ms.append(_now_ms() - sent_ms)
                 if isinstance(obj, dict) and obj.get("ok") is True and obj.get("op") == "LOGIN":
                     self.logged_in = True
+                    self.user_id = int(obj.get("user_id", 0))
+                    self.username = str(obj.get("username", ""))
+                    self.peer_role = str(obj.get("peer_role", "user"))
+                    self.conn_id = int(obj.get("conn_id", 0))
                 self.inbox.put(("reply", (h, obj)))
             else:
                 self.inbox.put(("frame", (h, body_raw)))
@@ -228,17 +252,20 @@ class RelayCLI:
                     any_msg = True
                     if typ == "deliver":
                         h, raw = payload
-                        preview = raw[:120]
-                        tail = "..." if len(raw) > len(preview) else ""
-                        mp_obj = None
                         try:
-                            mp_obj = msgpack.unpackb(raw, raw=False)
-                        except Exception:
-                            mp_obj = None
-                        self._p(
-                            f"[DELIVER] conn={c.name} src={h.get('src_user_id')} dst={h.get('dst_user_id')} seq={h.get('seq')} "
-                            f"len={len(raw)} preview={preview!r}{tail}" + (f" obj={mp_obj}" if mp_obj is not None else "")
-                        )
+                            pl, sc, dc, su, du = unpack_deliver_body(raw)
+                            preview = pl[:120]
+                            tail = "..." if len(pl) > len(preview) else ""
+                            self._p(
+                                f"[DELIVER] conn={c.name} src={h.get('src_user_id')} dst={h.get('dst_user_id')} "
+                                f"src_conn={sc} dst_conn={dc} seq={h.get('seq')} plen={len(pl)} preview={preview!r}{tail}"
+                                f" src_user={su!r} dst_user={du!r}"
+                            )
+                        except Exception as e:
+                            self._p(f"[DELIVER] conn={c.name} decode err={e!r} raw_len={len(raw)}")
+                    elif typ == "kick":
+                        h, kobj = payload
+                        self._p(f"[KICK]    conn={c.name} seq={h.get('seq')} body={kobj}")
                     elif typ == "reply":
                         h, obj = payload
                         # 降噪：自动心跳会频繁收到 ACK，默认不打印（避免刷屏影响交互输入）。
@@ -272,7 +299,7 @@ class RelayCLI:
                     continue
                 try:
                     seq = self._next_seq()
-                    c.send_msgpack({"op": "HEARTBEAT"}, seq=seq)
+                    c.send_msgpack({}, seq=seq, msg_type=MSG_CLIENT_HEARTBEAT)
                 except Exception:
                     # 不刷屏；错误会在 rx_loop/下一次操作时体现
                     pass
@@ -293,19 +320,20 @@ class RelayCLI:
                     "  list                            # 列出连接及状态",
                     "",
                     "登录与心跳：",
-                    "  login <name> <user_id> [role=data|control] [hb_s]   # 可选覆盖心跳秒数",
+                    "  login <name> <user|admin> <username> <password> [register] [hb_s]",
+                    "    # 末尾 register 表示注册新账号；否则为登录",
                     "  hb <name>",
                     "  sethb <name> <hb_s|off>         # 动态修改自动心跳；off 表示关闭",
                     "",
                     "转发（payload 支持: 文本 / @文件 / hex:...）：",
-                    "  send <from> unicast <dst_user_id> <payload>",
-                    "  send <from> broadcast <payload>",
-                    "  send <from> round_robin <interval_ms> <payload>",
+                    "  send <from> unicast <dst_username> <dst_conn_id> <payload>   # dst_conn_id=0 自动选连接",
+                    "  send <from> broadcast <dst_username> <payload>            # 发往目标用户全部连接",
+                    "  send <from> round_robin <dst_username> <interval_ms> <payload>",
                     "",
                     "对象/结构体（msgpack）转发：",
-                    "  sendmp <from> unicast <dst_user_id> <json>",
-                    "  sendmp <from> broadcast <json>",
-                    "  sendmp <from> round_robin <interval_ms> <json>",
+                    "  sendmp <from> unicast <dst_username> <dst_conn_id> <json>",
+                    "  sendmp <from> broadcast <dst_username> <json>",
+                    "  sendmp <from> round_robin <dst_username> <interval_ms> <json>",
                     "    - json: 标准 JSON 字符串（会被解析为对象，再用 msgpack 打包成 payload(bin)）",
                     "",
                     "控制面（SERVER_REPLY）：",
@@ -314,12 +342,12 @@ class RelayCLI:
                     "",
                     "观测与统计：",
                     "  stats [name]                    # 不带 name 则打印所有连接统计",
-                    "  admin health|stats|events        # 需提供 --admin-port 或 --spawn-server",
+                    "  admin health|stats|events|users   # 需提供 --admin-port 或 --spawn-server",
                     "",
                     "压力/稳定性：",
-                    "  flood <from> unicast <dst_user_id> <count> <bytes> [window=64]",
-                    "  flood <from> broadcast <count> <bytes> [window=64]",
-                    "  flood <from> round_robin <interval_ms> <count> <bytes> [window=64]",
+                    "  flood <from> unicast <dst_username> <dst_conn_id> <count> <bytes> [window=64]",
+                    "  flood <from> broadcast <dst_username> <count> <bytes> [window=64]",
+                    "  flood <from> round_robin <dst_username> <interval_ms> <count> <bytes> [window=64]",
                     "    - bytes: 每条 payload 大小（随机填充）",
                     "    - window: 允许在途 seq 数（越大越压）",
                     "",
@@ -356,15 +384,27 @@ class RelayCLI:
             return
         for name, c in self.conns.items():
             st = "UP" if c.is_connected() else "DOWN"
-            self._p(f"- {name}: {st} user_id={c.user_id} role={c.role} in={c.stats.frames_in} out={c.stats.frames_out} err={c.stats.errors}")
+            self._p(
+                f"- {name}: {st} user_id={c.user_id} user={c.username!r} peer_role={c.peer_role} conn_id={c.conn_id} "
+                f"in={c.stats.frames_in} out={c.stats.frames_out} err={c.stats.errors}"
+            )
 
-    def cmd_login(self, name: str, user_id: int, role: str) -> None:
+    def cmd_login(self, name: str, peer_role: str, username: str, password: str, register: bool) -> None:
         c = self._get(name)
-        c.user_id = int(user_id)
-        c.role = role
+        if peer_role not in ("user", "admin"):
+            peer_role = "user"
         seq = self._next_seq()
-        c.send_msgpack({"op": "LOGIN", "user_id": c.user_id, "role": role}, seq=seq)
-        self._p(f"OK sent LOGIN on {name} seq={seq}")
+        c.send_msgpack(
+            {
+                "username": username,
+                "password": password,
+                "peer_role": peer_role,
+                "register": register,
+            },
+            seq=seq,
+            msg_type=MSG_CLIENT_LOGIN,
+        )
+        self._p(f"OK sent LOGIN({'register' if register else 'login'}) on {name} seq={seq}")
     def cmd_sethb(self, name: str, hb: str) -> None:
         c = self._get(name)
         if hb.lower() == "off":
@@ -389,32 +429,47 @@ class RelayCLI:
     def cmd_hb(self, name: str) -> None:
         c = self._get(name)
         seq = self._next_seq()
-        c.send_msgpack({"op": "HEARTBEAT"}, seq=seq)
+        c.send_msgpack({}, seq=seq, msg_type=MSG_CLIENT_HEARTBEAT)
         self._p(f"OK sent HEARTBEAT on {name} seq={seq}")
 
     def cmd_send(self, from_name: str, mode: str, args: list[str]) -> None:
         c = self._get(from_name)
         seq = self._next_seq()
         if mode == "unicast":
-            if len(args) < 2:
-                raise RuntimeError("send unicast needs: <dst_user_id> <payload>")
-            dst = int(args[0])
-            payload = _load_payload(args[1])
-            c.send_msgpack({"op": "TRANSFER", "mode": "unicast", "dst_user_id": dst, "payload": payload}, seq=seq)
+            if len(args) < 3:
+                raise RuntimeError("send unicast needs: <dst_username> <dst_conn_id> <payload>")
+            dst = str(args[0])
+            dst_conn = int(args[1])
+            payload = _load_payload(args[2])
+            c.send_msgpack(
+                {"mode": "unicast", "dst_username": dst, "dst_conn_id": dst_conn, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
         elif mode == "broadcast":
-            if len(args) < 1:
-                raise RuntimeError("send broadcast needs: <payload>")
-            payload = _load_payload(args[0])
-            c.send_msgpack({"op": "TRANSFER", "mode": "broadcast", "payload": payload}, seq=seq)
-        elif mode in ("round_robin", "roundrobin"):
             if len(args) < 2:
-                raise RuntimeError("send round_robin needs: <interval_ms> <payload>")
-            interval_ms = int(args[0])
+                raise RuntimeError("send broadcast needs: <dst_username> <payload>")
+            dst = str(args[0])
             payload = _load_payload(args[1])
-            c.send_msgpack({"op": "TRANSFER", "mode": "round_robin", "interval_ms": interval_ms, "payload": payload}, seq=seq)
+            c.send_msgpack(
+                {"mode": "broadcast", "dst_username": dst, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
+        elif mode in ("round_robin", "roundrobin"):
+            if len(args) < 3:
+                raise RuntimeError("send round_robin needs: <dst_username> <interval_ms> <payload>")
+            dst = str(args[0])
+            interval_ms = int(args[1])
+            payload = _load_payload(args[2])
+            c.send_msgpack(
+                {"mode": "round_robin", "dst_username": dst, "interval_ms": interval_ms, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
         else:
             raise RuntimeError(f"unknown mode: {mode}")
-        self._p(f"OK sent TRANSFER({mode}) from {from_name} seq={seq}")
+        self._p(f"OK sent DATA({mode}) from {from_name} seq={seq}")
 
     def cmd_sendmp(self, from_name: str, mode: str, args: list[str]) -> None:
         """
@@ -424,38 +479,57 @@ class RelayCLI:
         c = self._get(from_name)
         seq = self._next_seq()
         if mode == "unicast":
-            if len(args) < 2:
-                raise RuntimeError("sendmp unicast needs: <dst_user_id> <json>")
-            dst = int(args[0])
-            obj = json.loads(args[1])
+            if len(args) < 3:
+                raise RuntimeError("sendmp unicast needs: <dst_username> <dst_conn_id> <json>")
+            dst = str(args[0])
+            dst_conn = int(args[1])
+            obj = json.loads(args[2])
             payload = msgpack.packb(obj, use_bin_type=True)
-            c.send_msgpack({"op": "TRANSFER", "mode": "unicast", "dst_user_id": dst, "payload": payload}, seq=seq)
+            c.send_msgpack(
+                {"mode": "unicast", "dst_username": dst, "dst_conn_id": dst_conn, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
         elif mode == "broadcast":
-            if len(args) < 1:
-                raise RuntimeError("sendmp broadcast needs: <json>")
-            obj = json.loads(args[0])
-            payload = msgpack.packb(obj, use_bin_type=True)
-            c.send_msgpack({"op": "TRANSFER", "mode": "broadcast", "payload": payload}, seq=seq)
-        elif mode in ("round_robin", "roundrobin"):
             if len(args) < 2:
-                raise RuntimeError("sendmp round_robin needs: <interval_ms> <json>")
-            interval_ms = int(args[0])
+                raise RuntimeError("sendmp broadcast needs: <dst_username> <json>")
+            dst = str(args[0])
             obj = json.loads(args[1])
             payload = msgpack.packb(obj, use_bin_type=True)
-            c.send_msgpack({"op": "TRANSFER", "mode": "round_robin", "interval_ms": interval_ms, "payload": payload}, seq=seq)
+            c.send_msgpack(
+                {"mode": "broadcast", "dst_username": dst, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
+        elif mode in ("round_robin", "roundrobin"):
+            if len(args) < 3:
+                raise RuntimeError("sendmp round_robin needs: <dst_username> <interval_ms> <json>")
+            dst = str(args[0])
+            interval_ms = int(args[1])
+            obj = json.loads(args[2])
+            payload = msgpack.packb(obj, use_bin_type=True)
+            c.send_msgpack(
+                {"mode": "round_robin", "dst_username": dst, "interval_ms": interval_ms, "payload": payload},
+                seq=seq,
+                msg_type=MSG_CLIENT_DATA,
+            )
         else:
             raise RuntimeError(f"unknown mode: {mode}")
-        self._p(f"OK sent TRANSFER({mode}) msgpack(payload) from {from_name} seq={seq}")
+        self._p(f"OK sent DATA({mode}) msgpack(payload) from {from_name} seq={seq}")
 
     def cmd_ctl(self, from_name: str, action: str, args: list[str]) -> None:
         c = self._get(from_name)
         seq = self._next_seq()
         if action == "list_users":
-            c.send_msgpack({"op": "CONTROL", "action": "list_users"}, seq=seq)
+            c.send_msgpack({"action": "list_users"}, seq=seq, msg_type=MSG_CLIENT_CONTROL)
         elif action == "kick_user":
             if not args:
                 raise RuntimeError("kick_user needs: <target_user_id>")
-            c.send_msgpack({"op": "CONTROL", "action": "kick_user", "target_user_id": int(args[0])}, seq=seq)
+            c.send_msgpack(
+                {"action": "kick_user", "target_user_id": int(args[0])},
+                seq=seq,
+                msg_type=MSG_CLIENT_CONTROL,
+            )
         else:
             raise RuntimeError(f"unknown action: {action}")
         self._p(f"OK sent CONTROL({action}) from {from_name} seq={seq}")
@@ -476,7 +550,7 @@ class RelayCLI:
             else:
                 rtt_s = "rtt_ms(n/a)"
             self._p(
-                f"[{c.name}] up={c.is_connected()} user_id={c.user_id} role={c.role} "
+                f"[{c.name}] up={c.is_connected()} user_id={c.user_id} user={c.username!r} peer_role={c.peer_role} conn_id={c.conn_id} "
                 f"in={c.stats.frames_in}({_fmt_bytes(c.stats.bytes_in)}) "
                 f"out={c.stats.frames_out}({_fmt_bytes(c.stats.bytes_out)}) "
                 f"deliver={c.stats.deliver_in} replies={c.stats.replies_in} inflight={len(c.stats.inflight)} "
@@ -497,8 +571,10 @@ class RelayCLI:
             url = self._admin_url("/api/stats")
         elif what == "events":
             url = self._admin_url("/api/events")
+        elif what == "users":
+            url = self._admin_url("/api/users")
         else:
-            raise RuntimeError("admin: health|stats|events")
+            raise RuntimeError("admin: health|stats|events|users")
         with urllib.request.urlopen(url, timeout=3) as r:
             data = r.read().decode("utf-8", errors="replace")
         self._p(data)
@@ -510,28 +586,44 @@ class RelayCLI:
         """
         c = self._get(from_name)
         if mode == "unicast":
-            if len(args) < 3:
-                raise RuntimeError("flood unicast needs: <dst_user_id> <count> <bytes> [window]")
-            dst = int(args[0])
-            count = int(args[1])
-            nbytes = int(args[2])
-            window = int(args[3]) if len(args) >= 4 else 64
-            mk_obj = lambda payload: {"op": "TRANSFER", "mode": "unicast", "dst_user_id": dst, "payload": payload}
+            if len(args) < 4:
+                raise RuntimeError("flood unicast needs: <dst_username> <dst_conn_id> <count> <bytes> [window]")
+            dst = str(args[0])
+            dst_conn = int(args[1])
+            count = int(args[2])
+            nbytes = int(args[3])
+            window = int(args[4]) if len(args) >= 5 else 64
+            mk_obj = lambda payload: {
+                "mode": "unicast",
+                "dst_username": dst,
+                "dst_conn_id": dst_conn,
+                "payload": payload,
+            }
+            mk_mt = MSG_CLIENT_DATA
         elif mode == "broadcast":
-            if len(args) < 2:
-                raise RuntimeError("flood broadcast needs: <count> <bytes> [window]")
-            count = int(args[0])
-            nbytes = int(args[1])
-            window = int(args[2]) if len(args) >= 3 else 64
-            mk_obj = lambda payload: {"op": "TRANSFER", "mode": "broadcast", "payload": payload}
-        elif mode in ("round_robin", "roundrobin"):
             if len(args) < 3:
-                raise RuntimeError("flood round_robin needs: <interval_ms> <count> <bytes> [window]")
-            interval_ms = int(args[0])
+                raise RuntimeError("flood broadcast needs: <dst_username> <count> <bytes> [window]")
+            dst = str(args[0])
             count = int(args[1])
             nbytes = int(args[2])
             window = int(args[3]) if len(args) >= 4 else 64
-            mk_obj = lambda payload: {"op": "TRANSFER", "mode": "round_robin", "interval_ms": interval_ms, "payload": payload}
+            mk_obj = lambda payload: {"mode": "broadcast", "dst_username": dst, "payload": payload}
+            mk_mt = MSG_CLIENT_DATA
+        elif mode in ("round_robin", "roundrobin"):
+            if len(args) < 4:
+                raise RuntimeError("flood round_robin needs: <dst_username> <interval_ms> <count> <bytes> [window]")
+            dst = str(args[0])
+            interval_ms = int(args[1])
+            count = int(args[2])
+            nbytes = int(args[3])
+            window = int(args[4]) if len(args) >= 5 else 64
+            mk_obj = lambda payload: {
+                "mode": "round_robin",
+                "dst_username": dst,
+                "interval_ms": interval_ms,
+                "payload": payload,
+            }
+            mk_mt = MSG_CLIENT_DATA
         else:
             raise RuntimeError(f"unknown mode: {mode}")
 
@@ -555,7 +647,7 @@ class RelayCLI:
             while len(c.stats.inflight) >= window:
                 time.sleep(0.005)
             seq = self._next_seq()
-            c.send_msgpack(mk_obj(payload), seq=seq)
+            c.send_msgpack(mk_obj(payload), seq=seq, msg_type=mk_mt)
             sent += 1
             if sent % max(1, (count // 10)) == 0:
                 elapsed = max(1e-6, time.time() - start)
@@ -639,20 +731,24 @@ class RelayCLI:
         if cmd == "list":
             return self.cmd_list()
         if cmd == "login":
-            if len(args) < 2:
-                raise RuntimeError("login <name> <user_id> [role] [hb_s]")
-            role = args[2] if len(args) >= 3 else "data"
-            if role not in ("data", "control"):
-                role = "data"
-            if len(args) >= 4:
-                hb_s = args[3]
+            if len(args) < 4:
+                raise RuntimeError("login <name> <user|admin> <username> <password> [register] [hb_s]")
+            name, peer_role, username, password = args[0], args[1], args[2], args[3]
+            register = False
+            rest = args[4:]
+            if rest and rest[0].lower() == "register":
+                register = True
+                rest = rest[1:]
+            if rest:
+                hb_s = rest[0]
+                c = self._get(name)
                 if hb_s.lower() == "off":
-                    self._get(args[0]).hb_interval_s = None
-                    self._get(args[0])._next_hb_ms = 0
+                    c.hb_interval_s = None
+                    c._next_hb_ms = 0
                 else:
-                    self._get(args[0]).hb_interval_s = float(hb_s)
-                    self._get(args[0])._next_hb_ms = 0
-            return self.cmd_login(args[0], int(args[1]), role)
+                    c.hb_interval_s = float(hb_s)
+                    c._next_hb_ms = 0
+            return self.cmd_login(name, peer_role, username, password, register)
         if cmd == "sethb":
             if len(args) != 2:
                 raise RuntimeError("sethb <name> <hb_s|off>")
@@ -677,7 +773,7 @@ class RelayCLI:
             return self.cmd_stats(args[0] if args else "")
         if cmd == "admin":
             if len(args) != 1:
-                raise RuntimeError("admin health|stats|events")
+                raise RuntimeError("admin health|stats|events|users")
             return self.cmd_admin(args[0])
         if cmd == "wait":
             if len(args) != 1:

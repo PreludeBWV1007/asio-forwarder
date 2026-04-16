@@ -18,60 +18,87 @@
 | version | u16 | `2` |
 | header_len | u16 | `40` |
 | body_len | u32 | 受配置 `limits.max_body_len` 约束；超限则断开 |
-| msg_type | u32 | 客户端上行可为 0 等自定义；**服务器下发**见下节 |
-| flags | u32 | 位定义在 `protocol.hpp`（`kBroadcast` 等）；**当前转发逻辑主要依据 Body `op`，未按 flags 解析路由** |
+| msg_type | u32 | **客户端上行**：见下节「客户端 msg_type」；**服务器下行**：见「服务器下发的 msg_type」 |
+| flags | u32 | 位定义在 `protocol.hpp`（`kBroadcast` 等）；**当前转发逻辑不依赖 flags 路由** |
 | seq | u32 | 建议单调；服务器回 **201** 时会回显该 `seq` |
-| src_user_id | u64 | 逻辑用户 id；未登录可为 0 |
-| dst_user_id | u64 | 可与 Body 内字段并用；**TRANSFER 单播**若 Body 未给 `dst_user_id`，可回退为 Header 的 `dst_user_id` |
+| src_user_id | u64 | 保留字段。**当前实现不用于路由**，服务器下行约定填 `0`；客户端可忽略 |
+| dst_user_id | u64 | 保留字段。**当前实现不用于路由**，服务器下行约定填 `0`；客户端可忽略 |
 
-### 服务器下发的 msg_type（`include/fwd/relay_constants.hpp`）
+### 客户端上行：`Header.msg_type`（`include/fwd/relay_constants.hpp`）
 
 | 值 | 常量 | 含义 | Body |
 |---:|---|---|---|
-| 200 | `kMsgDeliver` | 投递对端 payload | **非 msgpack**：与发送方 TRANSFER 中 `payload` **相同的原始字节** |
-| 201 | `kMsgServerReply` | 应答或错误 | **msgpack map**：LOGIN / HEARTBEAT / TRANSFER / CONTROL 的 `ok`、`error`、`op` 等 |
+| 1 | `kClientLogin` | 注册或登录 | **msgpack map**，见「登录 / 注册」 |
+| 2 | `kClientHeartbeat` | 心跳 | **msgpack map**（可为空 map `{}`） |
+| 3 | `kClientControl` | 管理控制 | **msgpack map**，见「CONTROL」 |
+| 4 | `kClientData` | 数据转发 | **msgpack map**，见「DATA」 |
 
-## Body（msgpack map，字符串键）
+**未登录**时：仅允许 **`msg_type == 1`** 的登录帧；其它类型会被断开。
 
-解析失败、非 map、缺 `op` 等会导致**断开连接**（见 `handle_client_frame`）。
+**已登录**时：仅处理 **2 / 3 / 4**；其它类型返回 **201** `ok:false` 说明错误（不断开，除非协议严重错误）。
 
-### 未登录
+### 服务器下发的 msg_type
 
-**仅允许**：
+| 值 | 常量 | 含义 | Body |
+|---:|---|---|---|
+| 200 | `kMsgDeliver` | 投递对端数据 | **msgpack map**：`payload`（bin）、`src_conn_id`（u64）、`dst_conn_id`（u64）、`src_username`（str）、`dst_username`（str）。`payload` 为发送方在 **DATA** 里给出的原始字节，服务器不解释其业务语义 |
+| 201 | `kMsgServerReply` | 应答或错误 | **msgpack map**：`ok`、`error`、`op` 等 |
+| 202 | `kMsgKick` | 服务端即将断开本连接 | **msgpack map**：`op:"KICK"`、`reason`（字符串，说明断开原因） |
+
+## 登录 / 注册（`msg_type = 1`）
+
+Body 为 **msgpack map**（字符串键）：
 
 ```text
-{ "op": "LOGIN", "user_id": <u64>, "role": "control" | "data" }
+{
+  "username": <str>,
+  "password": <str>,
+  "peer_role": "user" | "admin",
+  "register": <bool>
+}
 ```
 
-- `role` 缺省按 **`data`** 处理；非法值按 **`data`**。
-- 成功后回复 **201**，字段包含 `ok`、`op:"LOGIN"`、`conn_id`、`user_id`、`role`。
-
-### 已登录
-
-任意已登录业务包会 **`touch_heartbeat()`**（不仅限于 HEARTBEAT）。
-
-- **HEARTBEAT**：`{ "op": "HEARTBEAT" }`  
-  - 回复 **201** `ok:true`、`op:"HEARTBEAT"`。  
-  - 服务器未解析额外字段（如自定义 `ts_ms` 仅客户端自用）。
-
-- **TRANSFER**：
-  - `mode`：`"unicast"` | `"broadcast"` | `"round_robin"` | `"roundrobin"`（后两者等价）
-  - `payload`：**bin 或 str**，透明出现在 **200** 帧 body 中
-  - `dst_user_id`：**单播**时若 Body 未提供或为 0，则使用 **Header** 的 `dst_user_id`；仍为 0 则 **201** 报错
-  - `interval_ms`：**轮流**时使用；`0` 表示使用配置 **`session.round_robin_default_interval_ms`**
-  - 接受后回复 **201** `ok:true`、`op:"TRANSFER"`（**不保证对端应用已读**）
-
-- **CONTROL**：
-  - `action: "list_users"` → **201** 含 `users`（`user_id`、`connections`）
-  - `action: "kick_user"` + `target_user_id` → 断开该用户所有连接，**201** 含 `kicked_count`
-
-**安全说明（当前实现）**：**CONTROL 不校验 `role=="control"`**，任意已登录连接均可调用 `list_users` / `kick_user`。若需限制，应在业务层或后续在服务器增加鉴权。
+- **`register: true`**：注册新账号。用户名已存在则 **201** `ok:false`（不断开）。
+- **`register: false`**：登录已有账号。校验密码；并校验本次 **`peer_role` 与账号创建时保存的权限一致**（普通用户 / 管理员）。
+- 口令存储：进程内使用 **盐（hex）+ SHA-256（hex）** 摘要（见 `include/fwd/sha256.hpp`）；**重启后账号清空**。
+- 成功后服务器分配 **`user_id`（u64）** 并将会话加入该用户的连接表；登录成功回复 **201**，字段包含：  
+  `ok`、`op:"LOGIN"`、`conn_id`、`user_id`、`username`、`peer_role`（`"user"` 或 `"admin"`）。
 
 ### 每用户多连接（`user_deque_`）
 
-- 同一 `user_id` 可多条 TCP；超过 **`session.max_connections_per_user`** 时**踢掉最老**连接。
-- 新 **`control`** 登录会移除该用户已有的 **`control`** 连接，再入队。
-- **投递目标**（`pick_preferred`）：**优先非 control 的在线连接**，否则任选在线连接。
+- 同一 `user_id` 可多条 TCP；超过 **`session.max_connections_per_user`**（默认 8）时**淘汰最旧**连接，并对其发送 **202 KICK**（原因说明）后断开。
+- 不再有历史上的 **`control` / `data` 连接角色**；管理员与普通用户的区别在 **账号 `peer_role`**，见 CONTROL 一节。
+
+## 已登录：心跳（`msg_type = 2`）
+
+- Body：**msgpack map**（可为 `{}`）。
+- 任意已登录业务包（含本心跳）会 **`touch_heartbeat()`**。
+- 回复 **201**：`ok:true`、`op:"HEARTBEAT"`。
+
+## 已登录：DATA（`msg_type = 4`）
+
+Body 为 **msgpack map**：
+
+- **`mode`**：`"unicast"` | `"broadcast"` | `"round_robin"` | `"roundrobin"`（后两者等价）
+- **`payload`**：**bin 或 str**，透明放入对端 **200** 的 `payload` 字段
+- **`dst_username`**（str）  
+  - **unicast**：必填。表示目标接收者用户名  
+  - **broadcast**：必填。表示目标接收者用户名；服务器向该用户下**全部在线连接**各发一条 **200**  
+  - **round_robin**：必填。表示目标接收者用户名；服务器对该用户全部在线连接按顺序、间隔 **`interval_ms`** 毫秒逐条投递 **200**
+- **`dst_conn_id`**（u64，可选）：**仅 unicast** 有效；`0` 表示由服务器在该用户下任选一条在线连接；非 `0` 则投递到 `conn_id` 匹配的连接
+- **`interval_ms`**：**round_robin** 使用；`0` 表示使用配置 **`session.round_robin_default_interval_ms`**
+- 受理后回复 **201**：`ok:true`、`op:"DATA"`（**不保证对端应用已读**）
+
+## 已登录：CONTROL（`msg_type = 3`）
+
+**仅 `peer_role` 为管理员（`admin`）的账号**可调用；否则 **201** `ok:false`。
+
+Body 为 **msgpack map**：
+
+- **`action: "list_users"`** → **201** 含 `users`：每项含 `user_id`、`username`、`connections`（数组，元素为 `conn_id`、`endpoint`）
+- **`action: "kick_user"`** + `target_user_id` → 向该用户**所有在线连接**先发 **202 KICK**（含具体 `reason`），再断开；**201** 含 `ok`、`op:"CONTROL"`、`kicked_count`
+
+解析失败、非 map、未登录发业务帧等会导致**断开连接**（见 `handle_client_frame`）。
 
 ## 配置项摘要
 
@@ -85,3 +112,11 @@
 - `flow.send_queue.high_water_bytes`、`hard_limit_bytes`、`on_high_water`（`drop` | `disconnect`）
 - `metrics.interval_ms`
 - `session.*`：`max_connections_per_user`、`heartbeat_timeout_ms`、`round_robin_default_interval_ms`、`broadcast_max_recipients`
+
+## Admin HTTP（只读 JSON）
+
+除健康/统计/事件外，提供用户与连接映射快照：
+
+- **`GET /api/users`** → `{"users":[{"user_id", "username", "connections":[{"conn_id","endpoint"}]}]}`
+
+其余：`/api/health`、`/api/stats`、`/api/events`（见 `README.md` / `docs/architecture.md`）。

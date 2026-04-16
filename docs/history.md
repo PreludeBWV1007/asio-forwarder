@@ -5,32 +5,43 @@
 ## 当前版本的核心定位
 
 - **对等 TCP 中继**：所有客户端连同一业务端口（`client.listen`），无固定“上游/下游”角色。
-- **协议**：v2 线格式（40B 小端 header）+ 上行 msgpack map（`op` 驱动状态机）。
-- **投递**：服务器向客户端下发两类帧：
-  - **200 DELIVER**：Body 为 payload 原始字节
-  - **201 SERVER_REPLY**：Body 为 msgpack map（ACK/错误/CONTROL 返回等）
-- **观测**：admin 只读 HTTP（`/api/health`、`/api/stats`、`/api/events`）。
+- **协议**：v2 线格式（40B 小端 header）+ **msgpack body**；上行由 **`Header.msg_type`** 区分 **login(1) / heartbeat(2) / control(3) / data(4)**。
+- **账户**：用户名 + 口令（注册/登录）+ **`peer_role`（`user` | `admin`）**；分配 **`user_id`**；**重启丢失**。
+- **投递**：服务器向客户端下发帧类型包括：
+  - **200 DELIVER**：msgpack：`payload` + `src_conn_id` + `dst_conn_id` + `src_username` + `dst_username`（下行 header 的 src/dst user_id 约定为 0）
+  - **201 SERVER_REPLY**：msgpack（ACK/错误/CONTROL 返回等）
+  - **202 KICK**：msgpack（断开原因，先于 TCP 关闭尽量送达）
+- **观测**：admin 只读 HTTP（`/api/health`、`/api/stats`、`/api/events`、**`/api/users`**）。
 
-对应实现：`src/main.cpp`、`include/fwd/protocol.hpp`、`include/fwd/relay_constants.hpp`。
+对应实现：`src/main.cpp`、`include/fwd/protocol.hpp`、`include/fwd/relay_constants.hpp`、`include/fwd/sha256.hpp`。
 
-## 与旧版文档/实现的常见差异点
+## 与更早版本的差异（Body `op` + 旧 TRANSFER 时代）
 
-这些差异点是为了避免“拿旧版 README/文档去理解当前代码”导致误用。
+若你仍持有「`op: LOGIN` + `user_id` + `role: data|control`」或「`op: TRANSFER`」类文档/客户端，请注意已变更：
 
-- **无上游/下游二分**：当前只有 `client.listen` 一个业务端口，角色由 `LOGIN` + `op` 决定。
-- **Body 为 msgpack**：业务状态机依赖 msgpack map 的 `op`（LOGIN/HEARTBEAT/TRANSFER/CONTROL）。
-- **payload 透明转发**：服务器不解析 payload，200 的 Body 为原始字节。
-- **Header.flags**：位定义存在于 `include/fwd/protocol.hpp`，但当前主路径路由仍以 Body 字段为主（未按 flags 做复杂路由）。
-- **CONTROL 权限**：当前实现**不校验 `role=="control"`**；任意已登录连接可 `list_users` / `kick_user`（见 `docs/protocol.md` 的安全说明）。
+| 主题 | 旧行为（概要） | 当前行为（概要） |
+|------|----------------|------------------|
+| 上行路由 | Body **`op`**（LOGIN/HEARTBEAT/TRANSFER/CONTROL） | **`Header.msg_type`** 1–4 + msgpack map 字段 |
+| 登录 | `user_id` + `role: data\|control` | **`username` + `password` + `peer_role` + `register`**；服务器分配 `user_id` |
+| 连接角色 | `control` / `data` 连接类型、control 替换逻辑 | **已移除**；管理员能力在账号 **`peer_role: admin`** |
+| 数据转发 | `op: TRANSFER` | **`msg_type: data(4)`**，map 内 `mode` / **`dst_username`** / `payload` 等 |
+| 广播 | 除发送方外**所有其他用户**各一条（每用户优选一条连接） | 必须指定 **`dst_username`**：向该用户**全部连接**扇出 |
+| 轮询 | 对其他**用户**逐用户发 | 对目标 **`dst_username` 的全部连接**等间隔发送 |
+| DELIVER body | 与 payload **相同原始字节** | **msgpack 信封**（含 `payload`、连接 id、用户名） |
+| CONTROL | 任意已登录可调 | **仅管理员账号**可调 |
+| 踢线 | 多直接 `stop` | 尽量先发 **202** 带 **`reason`** |
+
+## 仍保留或需注意的点
+
+- **Header.flags**：位定义存在于 `include/fwd/protocol.hpp`，当前主路径**不依赖 flags** 做路由。
 - **线程配置**：JSON 里有 `threads.io` 与 `threads.biz`；当前进程实际只使用 `threads.io` 驱动 `io_context` 线程池，`threads.biz` 未接入独立业务线程池。
-- **Web/sidecar**：旧方案中可能存在 Web 大屏/sidecar/Protobuf 等内容；当前仓库以现实现为准，若需可视化需按当前 msgpack 协议另行实现。
+- **Web/sidecar**：旧方案中可能存在 Web 大屏/sidecar/Protobuf 等内容；当前仓库以现实现为准。
 
 ## 迁移建议（从旧客户端到新客户端）
 
-- **先实现 v2 帧头**：40B 小端，校验 magic/version/header_len。
-- **首包 LOGIN**：否则会被断开。
-- **按 op 发送业务**：`HEARTBEAT`、`TRANSFER`（unicast/broadcast/round_robin）、`CONTROL`。
-- **接收侧处理两类下行**：201 为 msgpack（ACK/错误/CONTROL 返回），200 为纯 payload 字节。
+- 实现 **v2 帧头**：40B 小端，校验 magic/version/header_len。
+- **首帧**：`msg_type=1`，msgpack：`username`、`password`、`peer_role`、`register`。
+- **已登录**：`msg_type=2` 心跳；`msg_type=4` 发数据（`mode`、`dst_username`、…）；`msg_type=3` 控制（仅管理员）。
+- **接收**：处理 **200**（解 msgpack 取 `payload`）、**201**、**202**。
 
-详细字段与示例见 `docs/protocol.md`；测试工具见 `docs/testing.md`。
-
+详细字段见 **`docs/protocol.md`**；Python 参考 **`docs/client_api.md`**、**`tools/relay_client.py`**；测试见 **`docs/testing.md`**。

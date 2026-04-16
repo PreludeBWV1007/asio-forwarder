@@ -9,8 +9,14 @@ MAGIC = 0x44574641
 VERSION = 2
 HEADER_LEN = 40
 
+MSG_CLIENT_LOGIN = 1
+MSG_CLIENT_HEARTBEAT = 2
+MSG_CLIENT_CONTROL = 3
+MSG_CLIENT_DATA = 4
+
 MSG_DELIVER = 200
 MSG_SERVER_REPLY = 201
+MSG_KICK = 202
 
 
 def pack_header(
@@ -87,3 +93,22 @@ def recv_frame_msgpack(sock) -> tuple[dict, object | None]:
     if not body:
         return h, None
     return h, msgpack.unpackb(body, raw=False)
+
+
+def unpack_deliver_body(body: bytes) -> tuple[bytes, int, int, str, str]:
+    """DELIVER(200) body 为 msgpack：{payload, src_conn_id, dst_conn_id, src_username, dst_username}。"""
+    o = msgpack.unpackb(body, raw=False)
+    if not isinstance(o, dict):
+        raise ValueError("DELIVER body must be msgpack map")
+    pl = o.get("payload")
+    if isinstance(pl, memoryview):
+        pl = pl.tobytes()
+    if not isinstance(pl, (bytes, bytearray)):
+        raise ValueError("DELIVER missing payload bytes")
+    return (
+        bytes(pl),
+        int(o.get("src_conn_id", 0)),
+        int(o.get("dst_conn_id", 0)),
+        str(o.get("src_username", "")),
+        str(o.get("dst_username", "")),
+    )

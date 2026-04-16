@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""手动联调入口：你先启动服务器，本脚本依次模拟客户端行为并断言结果。
-
-覆盖：
-- LOGIN（data/control）
-- HEARTBEAT
-- TRANSFER：unicast / broadcast / round_robin
-- CONTROL：list_users / kick_user
-- 异常包：不完整 msgpack 应断开
-
-用法：
-  pip install -r tools/requirements-relay.txt
-  PYTHONPATH=tools python3 tools/run_scenario.py 127.0.0.1 19000
-"""
+"""联调脚本：注册/登录、DATA 单播/广播/轮询、CONTROL、KICK、异常包。"""
 
 from __future__ import annotations
 
@@ -19,13 +7,20 @@ import socket
 import sys
 import time
 
+import msgpack
+
 from relay_proto import (
+    MSG_CLIENT_CONTROL,
+    MSG_CLIENT_DATA,
+    MSG_CLIENT_HEARTBEAT,
+    MSG_CLIENT_LOGIN,
     MSG_DELIVER,
+    MSG_KICK,
     MSG_SERVER_REPLY,
-    pack_frame_msgpack,
     pack_header,
     recv_frame,
     recv_frame_msgpack,
+    unpack_deliver_body,
 )
 
 
@@ -46,44 +41,51 @@ def must_reply_ok(sock: socket.socket, what: str) -> dict:
     return body
 
 
-def login(sock: socket.socket, user_id: int, role: str, seq: int) -> dict:
-    sock.sendall(pack_frame_msgpack({"op": "LOGIN", "user_id": user_id, "role": role}, seq=seq))
-    body = must_reply_ok(sock, f"LOGIN user_id={user_id} role={role}")
+def login(sock: socket.socket, username: str, password: str, peer_role: str, register: bool, seq: int) -> dict:
+    body = msgpack.packb(
+        {"username": username, "password": password, "peer_role": peer_role, "register": register},
+        use_bin_type=True,
+    )
+    sock.sendall(pack_header(len(body), MSG_CLIENT_LOGIN, seq=seq) + body)
+    body = must_reply_ok(sock, f"LOGIN {username}")
     assert body.get("op") == "LOGIN", body
     return body
 
 
 def heartbeat(sock: socket.socket, seq: int) -> None:
-    sock.sendall(pack_frame_msgpack({"op": "HEARTBEAT"}, seq=seq))
+    body = msgpack.packb({}, use_bin_type=True)
+    sock.sendall(pack_header(len(body), MSG_CLIENT_HEARTBEAT, seq=seq) + body)
     body = must_reply_ok(sock, "HEARTBEAT")
     assert body.get("op") == "HEARTBEAT", body
 
 
-def transfer_unicast(sender: socket.socket, dst_user_id: int, payload: bytes, seq: int) -> None:
-    sender.sendall(pack_frame_msgpack({"op": "TRANSFER", "mode": "unicast", "dst_user_id": dst_user_id, "payload": payload}, seq=seq))
-    body = must_reply_ok(sender, "TRANSFER unicast ack")
-    assert body.get("op") == "TRANSFER", body
-
-
-def transfer_broadcast(sender: socket.socket, payload: bytes, seq: int) -> None:
-    sender.sendall(pack_frame_msgpack({"op": "TRANSFER", "mode": "broadcast", "payload": payload}, seq=seq))
-    body = must_reply_ok(sender, "TRANSFER broadcast ack")
-    assert body.get("op") == "TRANSFER", body
-
-
-def transfer_round_robin(sender: socket.socket, payload: bytes, interval_ms: int, seq: int) -> None:
-    sender.sendall(
-        pack_frame_msgpack(
-            {"op": "TRANSFER", "mode": "round_robin", "interval_ms": interval_ms, "payload": payload},
-            seq=seq,
-        )
+def data_unicast(sender: socket.socket, dst_username: str, dst_conn: int, payload: bytes, seq: int) -> None:
+    body = msgpack.packb(
+        {"mode": "unicast", "dst_username": dst_username, "dst_conn_id": dst_conn, "payload": payload},
+        use_bin_type=True,
     )
-    body = must_reply_ok(sender, "TRANSFER round_robin ack")
-    assert body.get("op") == "TRANSFER", body
+    sender.sendall(pack_header(len(body), MSG_CLIENT_DATA, seq=seq) + body)
+    must_reply_ok(sender, "DATA unicast ack")
+
+
+def data_broadcast(sender: socket.socket, dst_username: str, payload: bytes, seq: int) -> None:
+    body = msgpack.packb({"mode": "broadcast", "dst_username": dst_username, "payload": payload}, use_bin_type=True)
+    sender.sendall(pack_header(len(body), MSG_CLIENT_DATA, seq=seq) + body)
+    must_reply_ok(sender, "DATA broadcast ack")
+
+
+def data_round_robin(sender: socket.socket, dst_username: str, payload: bytes, interval_ms: int, seq: int) -> None:
+    body = msgpack.packb(
+        {"mode": "round_robin", "dst_username": dst_username, "interval_ms": interval_ms, "payload": payload},
+        use_bin_type=True,
+    )
+    sender.sendall(pack_header(len(body), MSG_CLIENT_DATA, seq=seq) + body)
+    must_reply_ok(sender, "DATA round_robin ack")
 
 
 def control_list_users(ctl: socket.socket, seq: int) -> list[dict]:
-    ctl.sendall(pack_frame_msgpack({"op": "CONTROL", "action": "list_users"}, seq=seq))
+    body = msgpack.packb({"action": "list_users"}, use_bin_type=True)
+    ctl.sendall(pack_header(len(body), MSG_CLIENT_CONTROL, seq=seq) + body)
     body = must_reply_ok(ctl, "CONTROL list_users")
     users = body.get("users")
     assert isinstance(users, list), users
@@ -91,18 +93,21 @@ def control_list_users(ctl: socket.socket, seq: int) -> list[dict]:
 
 
 def control_kick_user(ctl: socket.socket, target_user_id: int, seq: int) -> int:
-    ctl.sendall(pack_frame_msgpack({"op": "CONTROL", "action": "kick_user", "target_user_id": target_user_id}, seq=seq))
+    body = msgpack.packb({"action": "kick_user", "target_user_id": target_user_id}, use_bin_type=True)
+    ctl.sendall(pack_header(len(body), MSG_CLIENT_CONTROL, seq=seq) + body)
     body = must_reply_ok(ctl, f"CONTROL kick_user target={target_user_id}")
     kc = body.get("kicked_count")
     assert isinstance(kc, int), body
     return kc
 
 
-def expect_deliver(sock: socket.socket, src_user_id: int, dst_user_id: int, payload: bytes, label: str) -> None:
+def expect_deliver(sock: socket.socket, src_username: str, dst_username: str, payload: bytes, label: str) -> None:
     h, raw = recv_frame(sock)
     assert h["msg_type"] == MSG_DELIVER, (label, h)
-    assert h["src_user_id"] == src_user_id and h["dst_user_id"] == dst_user_id, (label, h)
-    assert raw == payload, (label, raw)
+    assert h["src_user_id"] == 0 and h["dst_user_id"] == 0, (label, h)
+    pl, _, _, su, du = unpack_deliver_body(raw)
+    assert pl == payload, (label, raw)
+    assert su == src_username and du == dst_username, (label, su, du)
 
 
 def expect_no_deliver(sock: socket.socket, label: str, wait_s: float = 0.3) -> None:
@@ -116,8 +121,8 @@ def expect_no_deliver(sock: socket.socket, label: str, wait_s: float = 0.3) -> N
 
 def test_invalid_msgpack_disconnect(host: str, port: int) -> None:
     s = conn(host, port)
-    bad_body = b"\x81"  # map(1) 但缺 key/value
-    s.sendall(pack_header(len(bad_body), msg_type=0, seq=1) + bad_body)
+    bad_body = b"\x81"
+    s.sendall(pack_header(len(bad_body), MSG_CLIENT_LOGIN, seq=1) + bad_body)
     time.sleep(0.05)
     try:
         s.settimeout(0.3)
@@ -138,49 +143,50 @@ def main() -> int:
     c = conn(host, port)
     ctl = conn(host, port)
 
-    log("[2] LOGIN")
-    login(a, 101, "data", 1)
-    login(b, 202, "data", 1)
-    login(c, 303, "data", 1)
-    login(ctl, 9000, "control", 1)
+    log("[2] register / login")
+    la = login(a, "sc_alice", "pa", "user", True, 1)
+    lb = login(b, "sc_bob", "pb", "user", True, 1)
+    lc = login(c, "sc_carol", "pc", "user", True, 1)
+    lctl = login(ctl, "sc_admin", "padm", "admin", True, 1)
+    conn_b = int(lb["conn_id"])
+    conn_c = int(lc["conn_id"])
+    int(lctl["user_id"])
 
     log("[3] HEARTBEAT (A)")
     heartbeat(a, 2)
 
-    log("[4] TRANSFER unicast A->B")
+    log("[4] DATA unicast A->B")
     p1 = b"hello-unicast"
-    transfer_unicast(a, 202, p1, 3)
-    expect_deliver(b, 101, 202, p1, "unicast deliver")
+    data_unicast(a, "sc_bob", conn_b, p1, 3)
+    expect_deliver(b, "sc_alice", "sc_bob", p1, "unicast deliver")
 
-    log("[5] TRANSFER broadcast A->(B,C) and NOT self")
+    log("[5] DATA broadcast A->B 的全部连接（此处仅 B 单连接）")
     p2 = b"hello-broadcast"
-    transfer_broadcast(a, p2, 4)
-    expect_deliver(b, 101, 202, p2, "broadcast deliver to B")
-    expect_deliver(c, 101, 303, p2, "broadcast deliver to C")
-    expect_no_deliver(a, "broadcast should not deliver to self")
+    data_broadcast(a, "sc_bob", p2, 4)
+    expect_deliver(b, "sc_alice", "sc_bob", p2, "broadcast deliver to B")
+    expect_no_deliver(a, "broadcast should not deliver to sender")
 
-    log("[6] TRANSFER round_robin A->(B,C)")
+    log("[6] DATA round_robin A->C（单连接）")
     p3 = b"hello-rr"
-    transfer_round_robin(a, p3, interval_ms=10, seq=5)
-    # 两个目标各一条（顺序不做强断言）
-    got = []
-    for s in (b, c):
-        h, raw = recv_frame(s)
-        assert h["msg_type"] == MSG_DELIVER and h["src_user_id"] == 101 and raw == p3, (h, raw)
-        got.append(h["dst_user_id"])
-    assert set(got) == {202, 303}, got
+    data_round_robin(a, "sc_carol", p3, interval_ms=10, seq=5)
+    expect_deliver(c, "sc_alice", "sc_carol", p3, "rr deliver")
 
     log("[7] CONTROL list_users")
-    users = control_list_users(ctl, 2)
-    uids = {u.get("user_id") for u in users if isinstance(u, dict)}
-    assert {101, 202, 303, 9000}.issubset(uids), users
+    users = control_list_users(ctl, 6)
+    uids = {int(u["user_id"]) for u in users if isinstance(u, dict) and "user_id" in u}
+    assert len(uids) >= 3, users
 
-    log("[8] CONTROL kick_user (kick 303)")
-    kicked = control_kick_user(ctl, 303, 3)
+    log("[8] CONTROL kick_user (kick C)")
+    kicked = control_kick_user(ctl, int(lc["user_id"]), 7)
     assert kicked >= 1, kicked
+    hk, kb = recv_frame(c)
+    assert hk["msg_type"] == MSG_KICK
+    kobj = msgpack.unpackb(kb, raw=False)
+    assert isinstance(kobj, dict) and kobj.get("op") == "KICK" and "reason" in kobj
     time.sleep(0.1)
     try:
-        c.sendall(pack_frame_msgpack({"op": "HEARTBEAT"}, seq=99))
+        body = msgpack.packb({}, use_bin_type=True)
+        c.sendall(pack_header(len(body), MSG_CLIENT_HEARTBEAT, seq=99) + body)
         c.settimeout(0.3)
         recv_frame(c)
         raise AssertionError("kicked user still alive")
@@ -201,4 +207,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

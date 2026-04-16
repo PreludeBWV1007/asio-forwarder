@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>asio-forwarder Web UI</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --panel: #121a2b;
+        --text: #e6eefc;
+        --muted: #9bb0d1;
+        --border: rgba(255, 255, 255, 0.08);
+        --accent: #6ea8fe;
+        --danger: #ff6b6b;
+        --ok: #2ecc71;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+        background: radial-gradient(1200px 600px at 20% 0%, rgba(110, 168, 254, 0.18), transparent 60%),
+          radial-gradient(900px 600px at 80% 10%, rgba(46, 204, 113, 0.12), transparent 55%),
+          var(--bg);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 18px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      .title {
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+      .pill {
+        font-size: 12px;
+        color: var(--muted);
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        gap: 14px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+      }
+      .card h3 {
+        margin: 0 0 10px 0;
+        font-size: 14px;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 10px 0 6px;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.25);
+        color: var(--text);
+        outline: none;
+      }
+      textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .btns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      button {
+        cursor: pointer;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(110, 168, 254, 0.14);
+        color: var(--text);
+        font-weight: 700;
+      }
+      button.secondary {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      button.danger {
+        background: rgba(255, 107, 107, 0.14);
+      }
+      .log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 72vh;
+        overflow: auto;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.25);
+      }
+      .tag {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        margin-right: 8px;
+        color: var(--muted);
+      }
+      .tag.ok {
+        color: var(--ok);
+      }
+      .tag.bad {
+        color: var(--danger);
+      }
+      .tag.info {
+        color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="title">asio-forwarder Web UI（演示：注册/登录、DATA、CONTROL、KICK）</div>
+        <div class="pill" id="status">WS: disconnected</div>
+      </header>
+
+      <div class="grid">
+        <div class="card">
+          <h3>连接与登录</h3>
+          <div class="row">
+            <div>
+              <label>Relay Host</label>
+              <input id="relayHost" value="127.0.0.1" />
+            </div>
+            <div>
+              <label>Relay Port</label>
+              <input id="relayPort" value="19000" />
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>自动心跳间隔（秒，off 关闭）</label>
+              <input id="hbInterval" value="5" />
+            </div>
+            <div>
+              <label>peer_role</label>
+              <select id="peerRole">
+                <option value="user">user（普通）</option>
+                <option value="admin">admin（管理员）</option>
+              </select>
+            </div>
+          </div>
+          <label>username</label>
+          <input id="username" placeholder="例如：alice" />
+          <label>password</label>
+          <input id="password" placeholder="例如：secret" type="password" />
+          <div class="btns">
+            <button id="btnConnect">connect</button>
+            <button id="btnLogin" class="secondary">login</button>
+            <button id="btnRegister" class="secondary">register</button>
+            <button id="btnHB" class="secondary">heartbeat</button>
+            <button id="btnClose" class="danger">close</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>消息与控制</h3>
+          <div class="row">
+            <div>
+              <label>mode</label>
+              <select id="mode">
+                <option value="unicast">unicast</option>
+                <option value="broadcast">broadcast（到目标用户全部连接）</option>
+                <option value="round_robin">round_robin（到目标用户全部连接）</option>
+              </select>
+            </div>
+            <div>
+              <label>dst_conn_id（仅 unicast；0=自动选择）</label>
+              <input id="dstConnId" value="0" />
+            </div>
+          </div>
+          <label>dst_username</label>
+          <input id="dstUsername" placeholder="例如：bob" />
+          <label>interval_ms（仅 round_robin）</label>
+          <input id="intervalMs" value="50" />
+          <label>payload（UTF-8 文本）</label>
+          <textarea id="payload">hello</textarea>
+          <div class="btns">
+            <button id="btnSend">send DATA</button>
+            <button id="btnListUsers" class="secondary">CONTROL list_users</button>
+            <button id="btnKick" class="danger">CONTROL kick_user（填 target_user_id）</button>
+          </div>
+          <label>target_user_id（kick_user）</label>
+          <input id="targetUserId" value="0" />
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 14px">
+        <h3>事件日志</h3>
+        <div class="btns" style="margin: 0 0 10px 0">
+          <button id="btnClear" class="secondary">clear</button>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+      const logEl = el("log");
+      const statusEl = el("status");
+
+      function tag(t, cls) {
+        const s = document.createElement("span");
+        s.className = "tag " + (cls || "");
+        s.textContent = t;
+        return s;
+      }
+
+      function appendLog(kind, obj) {
+        const line = document.createElement("div");
+        const ts = new Date().toISOString();
+        if (kind === "deliver") line.appendChild(tag("DELIVER", "ok"));
+        else if (kind === "reply") line.appendChild(tag("REPLY", "info"));
+        else if (kind === "kick") line.appendChild(tag("KICK", "bad"));
+        else if (kind === "error") line.appendChild(tag("ERR", "bad"));
+        else line.appendChild(tag(kind.toUpperCase(), "info"));
+        line.appendChild(document.createTextNode(" " + ts + " " + JSON.stringify(obj, null, 2)));
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      let ws = null;
+      function connectWS() {
+        const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+        ws = new WebSocket(url);
+        ws.onopen = () => {
+          statusEl.textContent = "WS: connected";
+          appendLog("info", { msg: "websocket connected" });
+        };
+        ws.onclose = () => {
+          statusEl.textContent = "WS: disconnected";
+          appendLog("error", { msg: "websocket disconnected" });
+        };
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          appendLog(msg.type || "event", msg);
+        };
+      }
+
+      function send(obj) {
+        if (!ws || ws.readyState !== 1) {
+          appendLog("error", { msg: "ws not connected" });
+          return;
+        }
+        ws.send(JSON.stringify(obj));
+      }
+
+      el("btnConnect").onclick = () =>
+        send({
+          op: "connect",
+          host: el("relayHost").value.trim(),
+          port: Number(el("relayPort").value.trim()),
+          hb_interval_s: el("hbInterval").value.trim(),
+        });
+
+      el("btnClose").onclick = () => send({ op: "close" });
+      el("btnLogin").onclick = () =>
+        send({
+          op: "login",
+          username: el("username").value.trim(),
+          password: el("password").value,
+          peer_role: el("peerRole").value,
+          register: false,
+        });
+      el("btnRegister").onclick = () =>
+        send({
+          op: "login",
+          username: el("username").value.trim(),
+          password: el("password").value,
+          peer_role: el("peerRole").value,
+          register: true,
+        });
+      el("btnHB").onclick = () => send({ op: "heartbeat" });
+
+      el("btnSend").onclick = () =>
+        send({
+          op: "send",
+          mode: el("mode").value,
+          dst_username: el("dstUsername").value.trim(),
+          dst_conn_id: Number(el("dstConnId").value.trim()),
+          interval_ms: Number(el("intervalMs").value.trim()),
+          payload: el("payload").value,
+        });
+
+      el("btnListUsers").onclick = () => send({ op: "control", action: "list_users" });
+      el("btnKick").onclick = () =>
+        send({ op: "control", action: "kick_user", target_user_id: Number(el("targetUserId").value.trim()) });
+      el("btnClear").onclick = () => (logEl.textContent = "");
+
+      connectWS();
+    </script>
+  </body>
+</html>
+

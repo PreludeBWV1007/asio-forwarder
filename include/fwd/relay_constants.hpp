@@ -1,11 +1,21 @@
 #pragma once
 
+// 中继业务：Header.msg_type 取值约定（v2 帧头见 include/fwd/protocol.hpp）。
+// 字段语义、登录/DATA/CONTROL 的 body 键、200 投递信封格式等见 docs/protocol.md（与 src/main.cpp 一致）。
+
 #include <cstdint>
 
 namespace fwd::relay {
 
-// Header.msg_type：业务载荷由客户端互发；以下为服务器生成帧的类型。
-inline constexpr std::uint32_t kMsgDeliver = 200;   // Body 为对端 TRANSFER 的 payload 原样字节
+// 客户端 → 服务器：Header.msg_type（body 均为 msgpack map）
+inline constexpr std::uint32_t kClientLogin = 1;
+inline constexpr std::uint32_t kClientHeartbeat = 2;
+inline constexpr std::uint32_t kClientControl = 3;
+inline constexpr std::uint32_t kClientData = 4;
+
+// 服务器 → 客户端
+inline constexpr std::uint32_t kMsgDeliver = 200;    // Body 为 msgpack：{payload, src_conn_id, dst_conn_id, src_username, dst_username}
 inline constexpr std::uint32_t kMsgServerReply = 201;  // Body 为 msgpack：ACK/错误/CONTROL 回复
+inline constexpr std::uint32_t kMsgKick = 202;  // Body 为 msgpack：{op:"KICK", reason}
 
 }  // namespace fwd::relay

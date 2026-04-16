@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""非 Web 端到端：两客户端 LOGIN + HEARTBEAT + TRANSFER 单播 + 校验 DELIVER payload。"""
+"""非 Web 端到端：注册/登录 + 心跳 + DATA 单播 + 校验 DELIVER（含连接元数据）。"""
 from __future__ import annotations
 
 import socket
 import sys
 
-# 同目录导入
-from relay_proto import MSG_DELIVER, MSG_SERVER_REPLY, pack_frame_msgpack, recv_frame, recv_frame_msgpack
+import msgpack
+
+from relay_proto import (
+    MSG_CLIENT_DATA,
+    MSG_CLIENT_HEARTBEAT,
+    MSG_CLIENT_LOGIN,
+    MSG_DELIVER,
+    MSG_SERVER_REPLY,
+    pack_header,
+    recv_frame,
+    recv_frame_msgpack,
+    unpack_deliver_body,
+)
 
 
 def main() -> int:
@@ -16,34 +27,46 @@ def main() -> int:
     a = socket.create_connection((host, port), timeout=10)
     b = socket.create_connection((host, port), timeout=10)
 
-    a.sendall(pack_frame_msgpack({"op": "LOGIN", "user_id": 101, "role": "data"}, seq=1))
+    def send_login(sock, *, user: str, pw: str, role: str, register: bool, seq: int) -> None:
+        body = msgpack.packb(
+            {"username": user, "password": pw, "peer_role": role, "register": register},
+            use_bin_type=True,
+        )
+        sock.sendall(pack_header(len(body), MSG_CLIENT_LOGIN, seq=seq) + body)
+
+    send_login(a, user="e2e_alice", pw="secret1", role="user", register=True, seq=1)
     ha, ba = recv_frame_msgpack(a)
     assert ha["msg_type"] == MSG_SERVER_REPLY, ha
-    assert ba["ok"] is True and ba.get("op") == "LOGIN", ba
+    assert isinstance(ba, dict) and ba.get("ok") is True and ba.get("op") == "LOGIN", ba
+    conn_a = int(ba["conn_id"])
 
-    b.sendall(pack_frame_msgpack({"op": "LOGIN", "user_id": 202, "role": "data"}, seq=1))
+    send_login(b, user="e2e_bob", pw="secret2", role="user", register=True, seq=1)
     hb, bb = recv_frame_msgpack(b)
     assert hb["msg_type"] == MSG_SERVER_REPLY, hb
-    assert bb["ok"] is True, bb
+    assert isinstance(bb, dict) and bb.get("ok") is True, bb
+    conn_b = int(bb["conn_id"])
 
-    a.sendall(pack_frame_msgpack({"op": "HEARTBEAT"}, seq=2))
+    hb_body = msgpack.packb({}, use_bin_type=True)
+    a.sendall(pack_header(len(hb_body), MSG_CLIENT_HEARTBEAT, seq=2) + hb_body)
     h1, r1 = recv_frame_msgpack(a)
-    assert h1["msg_type"] == MSG_SERVER_REPLY and r1["ok"] is True, (h1, r1)
+    assert h1["msg_type"] == MSG_SERVER_REPLY and r1.get("ok") is True, (h1, r1)
 
     payload = b"unicast-e2e"
-    a.sendall(
-        pack_frame_msgpack(
-            {"op": "TRANSFER", "mode": "unicast", "dst_user_id": 202, "payload": payload},
-            seq=3,
-        )
+    data_body = msgpack.packb(
+        {"mode": "unicast", "dst_username": "e2e_bob", "dst_conn_id": conn_b, "payload": payload},
+        use_bin_type=True,
     )
+    a.sendall(pack_header(len(data_body), MSG_CLIENT_DATA, seq=3) + data_body)
     h2, r2 = recv_frame_msgpack(a)
-    assert h2["msg_type"] == MSG_SERVER_REPLY and r2["ok"] is True, (h2, r2)
+    assert h2["msg_type"] == MSG_SERVER_REPLY and r2.get("ok") is True, (h2, r2)
 
     hd, raw = recv_frame(b)
     assert hd["msg_type"] == MSG_DELIVER, hd
-    assert hd["src_user_id"] == 101 and hd["dst_user_id"] == 202, hd
-    assert raw == payload, raw
+    assert hd["src_user_id"] == 0 and hd["dst_user_id"] == 0, hd
+    pl, sc, dc, su, du = unpack_deliver_body(raw)
+    assert pl == payload, pl
+    assert sc == conn_a and dc == conn_b, (sc, dc)
+    assert su == "e2e_alice" and du == "e2e_bob", (su, du)
 
     print("relay_e2e_runner: OK")
     a.close()

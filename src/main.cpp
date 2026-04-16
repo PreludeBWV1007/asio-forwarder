@@ -1,5 +1,5 @@
-// 对等客户端中继：单 TCP 接入端口 + Msgpack Body 状态机（LOGIN / HEARTBEAT / TRANSFER / CONTROL）
-// + admin HTTP。无“上游/下游”之分。
+// 对等客户端中继：单 TCP 接入端口 + v2 帧头 msg_type（login/heartbeat/control/data）+ Msgpack Body
+// + admin HTTP。用户↔多连接映射、账户注册/登录、按用户连接转发。
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -23,7 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +34,7 @@
 #include "fwd/log.hpp"
 #include "fwd/protocol.hpp"
 #include "fwd/relay_constants.hpp"
+#include "fwd/sha256.hpp"
 
 using boost::asio::awaitable;
 using boost::asio::co_spawn;
@@ -163,7 +164,8 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   std::uint64_t conn_id() const { return conn_id_; }
   bool logged_in() const { return logged_in_; }
   std::uint64_t user_id() const { return user_id_; }
-  bool is_control() const { return is_control_; }
+  bool is_admin_account() const { return is_admin_; }
+  const std::string& username() const { return username_; }
   bool is_open() const { return socket_.is_open(); }
   std::size_t pending_bytes() const { return pending_bytes_; }
 
@@ -171,11 +173,26 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
 
   std::chrono::steady_clock::time_point last_hb_ts() const { return last_hb_; }
 
-  void mark_login(std::uint64_t uid, bool control) {
+  void mark_login(std::uint64_t uid, bool is_admin, std::string username) {
     logged_in_ = true;
     user_id_ = uid;
-    is_control_ = control;
+    is_admin_ = is_admin;
+    username_ = std::move(username);
     touch_heartbeat();
+  }
+
+  void kick_notify_and_close(std::shared_ptr<std::string> notify_wire, std::string log_why) {
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [self, notify_wire = std::move(notify_wire), log_why = std::move(log_why)]() mutable {
+      if (self->stopped_ || self->kick_pending_) return;
+      self->kick_pending_ = true;
+      self->kick_log_ = log_why;
+      self->queue_.clear();
+      self->pending_bytes_ = 0;
+      self->queue_.push_back(std::move(notify_wire));
+      self->pending_bytes_ += self->queue_.back()->size();
+      if (!self->writing_) self->do_write();
+    });
   }
 
   void stop(const std::string& why) {
@@ -194,7 +211,7 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
   void send_frame(std::shared_ptr<std::string> bytes) {
     auto self = shared_from_this();
     boost::asio::post(strand_, [self, bytes] {
-      if (self->stopped_) return;
+      if (self->stopped_ || self->kick_pending_) return;
       const auto new_total = self->pending_bytes_ + bytes->size();
       if (new_total > self->cfg_.flow.high_water_bytes && new_total <= self->cfg_.flow.hard_limit_bytes) {
         if (self->cfg_.flow.on_high_water == "disconnect") {
@@ -248,6 +265,17 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
               if (!self->queue_.empty()) self->queue_.pop_front();
               if (self->pending_bytes_ >= bytes->size()) self->pending_bytes_ -= bytes->size();
               else self->pending_bytes_ = 0;
+              if (self->kick_pending_ && self->queue_.empty()) {
+                self->kick_pending_ = false;
+                self->stopped_ = true;
+                boost::system::error_code ec2;
+                self->socket_.cancel(ec2);
+                self->socket_.close(ec2);
+                fwd::log::write(fwd::log::Level::kWarn, "session closed after KICK: " + self->kick_log_ +
+                                                          " conn=" + std::to_string(self->conn_id_) +
+                                                          " ep=" + self->endpoint_str());
+                return;
+              }
               if (!self->queue_.empty()) self->do_write();
             }));
   }
@@ -268,7 +296,10 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
 
   bool logged_in_{false};
   std::uint64_t user_id_{0};
-  bool is_control_{false};
+  bool is_admin_{false};
+  std::string username_{};
+  bool kick_pending_{false};
+  std::string kick_log_{};
   std::chrono::steady_clock::time_point last_hb_{};
 };
 
@@ -321,9 +352,73 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     }
   }
 
+  void notify_and_close(const std::shared_ptr<TcpSession>& s, std::string user_reason, std::string log_why) {
+    if (!s) return;
+    if (!s->logged_in()) {
+      s->stop(log_why);
+      return;
+    }
+    msgpack::sbuffer kb;
+    msgpack::packer<msgpack::sbuffer> pk(&kb);
+    pk.pack_map(2);
+    pk.pack("op");
+    pk.pack("KICK");
+    pk.pack("reason");
+    pk.pack(user_reason);
+    std::string body(kb.data(), kb.size());
+    auto wire = pack_wire(relay::kMsgKick, 0, 0, 0, body);
+    s->kick_notify_and_close(std::move(wire), std::move(log_why));
+  }
+
   awaitable<void> handle_client_frame(std::shared_ptr<TcpSession> from, const proto::Header& wire_h, std::string body);
 
  private:
+  struct AccountRecord {
+    std::string username;
+    std::string salt_hex;
+    std::string pass_hash_hex;
+    bool is_admin{false};
+    std::uint64_t user_id{0};
+  };
+
+  static std::string random_hex_salt(std::size_t nbytes) {
+    std::random_device rd;
+    static const char* hx = "0123456789abcdef";
+    std::string out(nbytes * 2, '0');
+    for (std::size_t i = 0; i < nbytes; ++i) {
+      unsigned v = static_cast<unsigned>(rd()) & 0xFF;
+      out[i * 2] = hx[v >> 4];
+      out[i * 2 + 1] = hx[v & 15];
+    }
+    return out;
+  }
+
+  static bool hex_to_bytes(const std::string& hex, std::string& out) {
+    if (hex.size() % 2) return false;
+    out.clear();
+    out.reserve(hex.size() / 2);
+    auto nib = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    for (std::size_t i = 0; i < hex.size(); i += 2) {
+      int hi = nib(hex[i]);
+      int lo = nib(hex[i + 1]);
+      if (hi < 0 || lo < 0) return false;
+      out.push_back(static_cast<char>((hi << 4) | lo));
+    }
+    return true;
+  }
+
+  static std::string hash_password(const std::string& salt_hex, const std::string& password_utf8) {
+    std::string salt_raw;
+    if (!hex_to_bytes(salt_hex, salt_raw)) return {};
+    const std::string material = salt_raw + password_utf8;
+    return sha256::hash_hex(material.data(), material.size());
+  }
+
   static std::uint64_t now_ms_wall() {
     using namespace std::chrono;
     return static_cast<std::uint64_t>(duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
@@ -442,6 +537,36 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     j += "\"bytes_out\":" + std::to_string(s.bytes_out) + ",";
     j += "\"drops\":" + std::to_string(s.drops);
     j += "}";
+    return j;
+  }
+
+  std::string build_users_json() {
+    std::lock_guard lk(mu_);
+    std::string j;
+    j.reserve(1024);
+    j += "{\"users\":[";
+    bool first = true;
+    for (const auto& kv : user_deque_) {
+      if (!first) j += ",";
+      first = false;
+      const std::uint64_t uid = kv.first;
+      std::string uname;
+      auto itn = uid_to_username_.find(uid);
+      if (itn != uid_to_username_.end()) uname = itn->second;
+      j += "{\"user_id\":" + std::to_string(uid);
+      j += ",\"username\":\"" + json_escape(uname) + "\"";
+      j += ",\"connections\":[";
+      bool fc = true;
+      for (const auto& s : kv.second) {
+        if (!s || !s->is_open()) continue;
+        if (!fc) j += ",";
+        fc = false;
+        j += "{\"conn_id\":" + std::to_string(s->conn_id());
+        j += ",\"endpoint\":\"" + json_escape(s->endpoint_str()) + "\"}";
+      }
+      j += "]}";
+    }
+    j += "]}";
     return j;
   }
 
@@ -568,6 +693,9 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     } else if (target == "/api/events") {
       res.result(http::status::ok);
       res.body() = build_events_json();
+    } else if (target == "/api/users") {
+      res.result(http::status::ok);
+      res.body() = build_users_json();
     } else {
       res.result(http::status::not_found);
       res.body() = "{\"error\":\"not_found\"}";
@@ -613,7 +741,7 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     for (const auto& s : snap) {
       if (!s || !s->logged_in() || !s->is_open()) continue;
       if (now - s->last_hb_ts() > timeout) {
-        s->stop("heartbeat timeout");
+        notify_and_close(s, "心跳超时：在设定时间内未收到有效业务帧（含心跳）", "heartbeat timeout");
         push_event(fwd::log::Level::kWarn, "heartbeat timeout conn=" + std::to_string(s->conn_id()));
       }
     }
@@ -715,102 +843,174 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
 
   void send_reply(const std::shared_ptr<TcpSession>& to, const msgpack::sbuffer& buf, std::uint32_t seq = 0) {
     std::string body(buf.data(), buf.size());
-    to->send_frame(pack_wire(relay::kMsgServerReply, 0, to->user_id(), seq, body));
+    to->send_frame(pack_wire(relay::kMsgServerReply, 0, 0, seq, body));
   }
 
-  void apply_login(const std::shared_ptr<TcpSession>& self, std::uint64_t uid, bool control) {
-    std::vector<std::shared_ptr<TcpSession>> to_kick;
+  void send_err_reply(const std::shared_ptr<TcpSession>& from, std::uint32_t seq, const std::string& err) {
+    msgpack::sbuffer eb;
+    msgpack::packer<msgpack::sbuffer> pk(&eb);
+    pk.pack_map(2);
+    pk.pack("ok");
+    pk.pack(false);
+    pk.pack("error");
+    pk.pack(err);
+    send_reply(from, eb, seq);
+  }
+
+  std::string pack_deliver_envelope(const std::string& payload, std::uint64_t src_conn, std::uint64_t dst_conn,
+                                    const std::string& src_username, const std::string& dst_username) {
+    msgpack::sbuffer buf;
+    msgpack::packer<msgpack::sbuffer> pk(&buf);
+    pk.pack_map(5);
+    pk.pack("payload");
+    pk.pack_bin(static_cast<std::uint32_t>(payload.size()));
+    pk.pack_bin_body(payload.data(), static_cast<std::uint32_t>(payload.size()));
+    pk.pack("src_conn_id");
+    pk.pack(src_conn);
+    pk.pack("dst_conn_id");
+    pk.pack(dst_conn);
+    pk.pack("src_username");
+    pk.pack(src_username);
+    pk.pack("dst_username");
+    pk.pack(dst_username);
+    return std::string(buf.data(), buf.size());
+  }
+
+  std::optional<std::uint64_t> username_to_uid(const std::string& username) {
+    std::lock_guard lk(mu_);
+    auto it = accounts_.find(username);
+    if (it == accounts_.end()) return std::nullopt;
+    return it->second.user_id;
+  }
+
+  std::optional<std::string> try_authenticate(const std::shared_ptr<TcpSession>& self, const msgpack::object_map& mp) {
+    const auto un = map_get_str(mp, "username");
+    const auto pw = map_get_str(mp, "password");
+    const auto pr = map_get_str(mp, "peer_role");
+    if (!un || un->empty()) return std::string("缺少 username");
+    if (!pw) return std::string("缺少 password");
+    if (!pr) return std::string("缺少 peer_role（user 或 admin）");
+    std::string peer = *pr;
+    if (peer != "admin" && peer != "user") return std::string("peer_role 必须是 user 或 admin");
+    const bool want_admin = (peer == "admin");
+    const bool reg = map_get_bool(mp, "register", false);
+
+    std::vector<std::pair<std::shared_ptr<TcpSession>, std::string>> to_notify;
     {
       std::lock_guard lk(mu_);
-      auto& dq = user_deque_[uid];
-      if (control) {
-        for (auto it = dq.begin(); it != dq.end();) {
-          if ((*it)->is_control()) {
-            to_kick.push_back(*it);
-            it = dq.erase(it);
-          } else {
-            ++it;
-          }
+      if (reg) {
+        if (accounts_.find(*un) != accounts_.end()) return std::string("用户名已存在");
+        AccountRecord rec;
+        rec.username = *un;
+        rec.salt_hex = random_hex_salt(16);
+        rec.pass_hash_hex = hash_password(rec.salt_hex, *pw);
+        if (rec.pass_hash_hex.empty()) return std::string("口令处理失败");
+        rec.is_admin = want_admin;
+        rec.user_id = ++next_user_id_;
+        accounts_[rec.username] = rec;
+        uid_to_username_[rec.user_id] = rec.username;
+        auto& dq = user_deque_[rec.user_id];
+        dq.push_back(self);
+        while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
+          auto victim = dq.front();
+          dq.pop_front();
+          to_notify.push_back({victim, "因单用户连接数达到上限，服务端按策略释放了最旧的一条连接"});
         }
-      }
-      dq.push_back(self);
-      while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
-        to_kick.push_back(dq.front());
-        dq.pop_front();
+        self->mark_login(rec.user_id, rec.is_admin, rec.username);
+      } else {
+        auto it = accounts_.find(*un);
+        if (it == accounts_.end()) return std::string("用户不存在");
+        if (it->second.pass_hash_hex != hash_password(it->second.salt_hex, *pw)) return std::string("密码错误");
+        if (it->second.is_admin != want_admin) return std::string("登录所选权限与账号不一致");
+        const std::uint64_t uid = it->second.user_id;
+        auto& dq = user_deque_[uid];
+        dq.push_back(self);
+        while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
+          auto victim = dq.front();
+          dq.pop_front();
+          to_notify.push_back({victim, "因单用户连接数达到上限，服务端按策略释放了最旧的一条连接"});
+        }
+        self->mark_login(uid, it->second.is_admin, it->second.username);
       }
     }
-    for (const auto& v : to_kick) {
-      if (v && v != self) v->stop("replaced / max connections per user");
+    for (const auto& pr2 : to_notify) {
+      if (pr2.first && pr2.first != self) notify_and_close(pr2.first, pr2.second, "max_connections_per_user");
     }
-    self->mark_login(uid, control);
+    return std::nullopt;
   }
 
-  std::shared_ptr<TcpSession> pick_preferred(std::uint64_t uid) {
+  std::shared_ptr<TcpSession> find_user_connection(std::uint64_t uid, std::uint64_t conn_id) {
     std::lock_guard lk(mu_);
     auto it = user_deque_.find(uid);
     if (it == user_deque_.end()) return nullptr;
-    for (const auto& s : it->second) {
-      if (s && s->is_open() && !s->is_control()) return s;
+    if (conn_id == 0) {
+      for (const auto& s : it->second) {
+        if (s && s->is_open()) return s;
+      }
+      return nullptr;
     }
     for (const auto& s : it->second) {
-      if (s && s->is_open()) return s;
+      if (s && s->is_open() && s->conn_id() == conn_id) return s;
     }
     return nullptr;
   }
 
-  std::set<std::uint64_t> other_user_ids(std::uint64_t exclude_uid) {
-    std::set<std::uint64_t> out;
+  std::vector<std::shared_ptr<TcpSession>> list_user_connections(std::uint64_t uid) {
     std::lock_guard lk(mu_);
-    for (const auto& kv : user_deque_) {
-      if (kv.first == exclude_uid) continue;
-      bool any = false;
-      for (const auto& s : kv.second) {
-        if (s && s->is_open()) {
-          any = true;
-          break;
-        }
-      }
-      if (any) out.insert(kv.first);
+    std::vector<std::shared_ptr<TcpSession>> out;
+    auto it = user_deque_.find(uid);
+    if (it == user_deque_.end()) return out;
+    for (const auto& s : it->second) {
+      if (s && s->is_open()) out.push_back(s);
     }
     return out;
   }
 
-  void deliver_unicast(std::uint64_t src_uid, std::uint64_t dst_uid, const std::string& payload, std::uint32_t seq) {
-    auto s = pick_preferred(dst_uid);
+  void deliver_unicast_by_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
+                                   std::uint64_t dst_conn_id, const std::string& payload, std::uint32_t seq) {
+    auto dst_uid = username_to_uid(dst_username);
+    if (!dst_uid) return;
+    auto s = find_user_connection(*dst_uid, dst_conn_id);
     if (!s) return;
-    s->send_frame(pack_wire(relay::kMsgDeliver, src_uid, dst_uid, seq, payload));
+    const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
+    s->send_frame(pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
   }
 
-  void deliver_broadcast(std::uint64_t src_uid, const std::string& payload, std::uint32_t seq) {
-    auto users = other_user_ids(src_uid);
+  void deliver_broadcast_to_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
+                                     const std::string& payload, std::uint32_t seq) {
+    auto dst_uid = username_to_uid(dst_username);
+    if (!dst_uid) return;
+    auto targets = list_user_connections(*dst_uid);
     int sent = 0;
     const int cap = cfg_.session.broadcast_max_recipients;
-    for (std::uint64_t uid : users) {
+    for (const auto& s : targets) {
       if (sent >= cap) {
         push_event(fwd::log::Level::kWarn, "broadcast truncated at max_recipients");
         break;
       }
-      auto s = pick_preferred(uid);
-      if (s) {
-        s->send_frame(pack_wire(relay::kMsgDeliver, src_uid, uid, seq, payload));
-        ++sent;
-      }
+      const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
+      s->send_frame(pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
+      ++sent;
     }
   }
 
-  void schedule_round_robin(std::uint64_t src_uid, const std::string& payload, std::uint32_t seq, int interval_ms) {
-    auto users = other_user_ids(src_uid);
-    std::vector<std::uint64_t> order(users.begin(), users.end());
+  void schedule_round_robin_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
+                                     const std::string& payload, std::uint32_t seq, int interval_ms) {
+    auto dst_uid = username_to_uid(dst_username);
+    if (!dst_uid) return;
+    auto targets = list_user_connections(*dst_uid);
     if (interval_ms <= 0) interval_ms = cfg_.session.round_robin_default_interval_ms;
     auto self = shared_from_this();
     co_spawn(
         io_,
-        [self, order, payload, seq, src_uid, interval_ms]() -> awaitable<void> {
-          for (std::size_t i = 0; i < order.size(); ++i) {
-            const std::uint64_t uid = order[i];
-            auto s = self->pick_preferred(uid);
-            if (s) s->send_frame(self->pack_wire(relay::kMsgDeliver, src_uid, uid, seq, payload));
-            if (i + 1 < order.size() && interval_ms > 0) {
+        [self, targets, payload, seq, src_username, src_conn_id, dst_username, interval_ms]() -> awaitable<void> {
+          for (std::size_t i = 0; i < targets.size(); ++i) {
+            auto s = targets[i];
+            if (s && s->is_open()) {
+              const auto body = self->pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
+              s->send_frame(self->pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
+            }
+            if (i + 1 < targets.size() && interval_ms > 0) {
               auto ex = co_await boost::asio::this_coro::executor;
               boost::asio::steady_timer t(ex);
               t.expires_after(std::chrono::milliseconds(interval_ms));
@@ -834,6 +1034,9 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
   std::vector<std::shared_ptr<TcpSession>> all_;
   std::unordered_map<std::uint64_t, std::shared_ptr<TcpSession>> by_id_;
   std::unordered_map<std::uint64_t, std::deque<std::shared_ptr<TcpSession>>> user_deque_;
+  std::unordered_map<std::string, AccountRecord> accounts_;
+  std::unordered_map<std::uint64_t, std::string> uid_to_username_;
+  std::uint64_t next_user_id_{0};
 
   Metrics metrics_{};
   const std::uint64_t started_ms_{now_ms_wall()};
@@ -845,10 +1048,11 @@ awaitable<void> TcpSession::read_loop(std::shared_ptr<RelayServer> hub) {
   boost::system::error_code ec;
   auto last_activity = std::chrono::steady_clock::now();
   while (true) {
+    if (stopped_) break;
     if (hub->cfg_.timeouts.idle_ms > 0) {
       auto now = std::chrono::steady_clock::now();
       if (now - last_activity > std::chrono::milliseconds(hub->cfg_.timeouts.idle_ms)) {
-        stop("idle timeout");
+        hub->notify_and_close(shared_from_this(), "空闲超时：长时间无任何帧收发", "idle timeout");
         break;
       }
     }
@@ -892,6 +1096,55 @@ awaitable<void> TcpSession::read_loop(std::shared_ptr<RelayServer> hub) {
 
 awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> from, const proto::Header& wire_h,
                                                 std::string body) {
+  const std::uint32_t mtype = wire_h.msg_type;
+
+  if (!from->logged_in()) {
+    if (mtype != relay::kClientLogin) {
+      from->stop("需要先登录：首帧 Header.msg_type 必须为 login(1)");
+      co_return;
+    }
+    msgpack::object_handle oh;
+    try {
+      oh = msgpack::unpack(body.data(), body.size());
+    } catch (...) {
+      from->stop("invalid msgpack body");
+      co_return;
+    }
+    const msgpack::object& root = oh.get();
+    if (root.type != msgpack::type::MAP) {
+      from->stop("body must be msgpack map");
+      co_return;
+    }
+    const auto& mp = root.via.map;
+    if (const auto err = try_authenticate(from, mp)) {
+      send_err_reply(from, wire_h.seq, *err);
+      co_return;
+    }
+    const std::string peer_str = from->is_admin_account() ? "admin" : "user";
+    msgpack::sbuffer buf;
+    msgpack::packer<msgpack::sbuffer> pk(&buf);
+    pk.pack_map(6);
+    pk.pack("ok");
+    pk.pack(true);
+    pk.pack("op");
+    pk.pack("LOGIN");
+    pk.pack("conn_id");
+    pk.pack(from->conn_id());
+    pk.pack("user_id");
+    pk.pack(from->user_id());
+    pk.pack("username");
+    pk.pack(from->username());
+    pk.pack("peer_role");
+    pk.pack(peer_str);
+    send_reply(from, buf, wire_h.seq);
+    fwd::log::write(fwd::log::Level::kInfo, "login ok conn=" + std::to_string(from->conn_id()) + " ep=" +
+                                                 from->endpoint_str() + " user=" + from->username() +
+                                                 " uid=" + std::to_string(from->user_id()) + " seq=" +
+                                                 std::to_string(wire_h.seq));
+    push_event(fwd::log::Level::kInfo, "login ok user=" + from->username());
+    co_return;
+  }
+
   msgpack::object_handle oh;
   try {
     oh = msgpack::unpack(body.data(), body.size());
@@ -905,53 +1158,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     co_return;
   }
   const auto& mp = root.via.map;
-  const auto op = map_get_str(mp, "op");
-  if (!op) {
-    from->stop("missing op");
-    co_return;
-  }
 
-  if (!from->logged_in()) {
-    if (*op != "LOGIN") {
-      from->stop("LOGIN required");
-      co_return;
-    }
-    const auto uid = map_get_u64(mp, "user_id");
-    if (!uid) {
-      from->stop("LOGIN missing user_id");
-      co_return;
-    }
-    std::string role = map_get_str(mp, "role").value_or("data");
-    if (role != "control" && role != "data") role = "data";
-    apply_login(from, *uid, role == "control");
-    fwd::log::write(fwd::log::Level::kInfo,
-                    "login ok conn=" + std::to_string(from->conn_id()) + " ep=" + from->endpoint_str() +
-                        " user_id=" + std::to_string(*uid) + " role=" + role + " seq=" + std::to_string(wire_h.seq));
-    push_event(fwd::log::Level::kInfo,
-               "login ok conn=" + std::to_string(from->conn_id()) + " user_id=" + std::to_string(*uid) + " role=" + role);
-    msgpack::sbuffer buf;
-    msgpack::packer<msgpack::sbuffer> pk(&buf);
-    pk.pack_map(5);
-    pk.pack("ok");
-    pk.pack(true);
-    pk.pack("op");
-    pk.pack("LOGIN");
-    pk.pack("conn_id");
-    pk.pack(from->conn_id());
-    pk.pack("user_id");
-    pk.pack(*uid);
-    pk.pack("role");
-    pk.pack(role);
-    send_reply(from, buf, wire_h.seq);
-    co_return;
-  }
-
-  from->touch_heartbeat();
-
-  if (*op == "HEARTBEAT") {
-    fwd::log::write(fwd::log::Level::kDebug,
-                    "heartbeat conn=" + std::to_string(from->conn_id()) + " user_id=" + std::to_string(from->user_id()) +
-                        " seq=" + std::to_string(wire_h.seq));
+  if (mtype == relay::kClientHeartbeat) {
+    from->touch_heartbeat();
     msgpack::sbuffer buf;
     msgpack::packer<msgpack::sbuffer> pk(&buf);
     pk.pack_map(2);
@@ -963,75 +1172,42 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     co_return;
   }
 
-  if (*op == "TRANSFER") {
+  from->touch_heartbeat();
+
+  if (mtype == relay::kClientData) {
     const auto mode = map_get_str(mp, "mode").value_or("unicast");
     const auto* pay_obj = map_get_obj(mp, "payload");
     auto payload = extract_payload_bin(pay_obj);
     if (!payload) {
-      fwd::log::write(fwd::log::Level::kWarn,
-                      "transfer reject missing payload conn=" + std::to_string(from->conn_id()) +
-                          " user_id=" + std::to_string(from->user_id()) + " mode=" + mode +
-                          " seq=" + std::to_string(wire_h.seq));
-      push_event(fwd::log::Level::kWarn, "transfer reject missing payload user_id=" + std::to_string(from->user_id()));
-      msgpack::sbuffer eb;
-      msgpack::packer<msgpack::sbuffer> pk(&eb);
-      pk.pack_map(2);
-      pk.pack("ok");
-      pk.pack(false);
-      pk.pack("error");
-      pk.pack("TRANSFER missing payload (bin or str)");
-      send_reply(from, eb, wire_h.seq);
+      send_err_reply(from, wire_h.seq, "DATA 缺少 payload（bin 或 str）");
       co_return;
     }
-    std::uint64_t dst = map_get_u64(mp, "dst_user_id").value_or(wire_h.dst_user_id);
-    int interval_ms = static_cast<int>(map_get_u64(mp, "interval_ms").value_or(0));
+    const auto dst_username = map_get_str(mp, "dst_username");
+    const std::uint64_t dst_conn = map_get_u64(mp, "dst_conn_id").value_or(0);
+    const int interval_ms = static_cast<int>(map_get_u64(mp, "interval_ms").value_or(0));
+    const std::uint64_t src_c = from->conn_id();
+    const std::string& src_un = from->username();
+
     if (mode == "unicast") {
-      if (dst == 0) {
-        fwd::log::write(fwd::log::Level::kWarn,
-                        "transfer reject unicast missing dst conn=" + std::to_string(from->conn_id()) +
-                            " user_id=" + std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
-        push_event(fwd::log::Level::kWarn, "transfer reject unicast missing dst user_id=" + std::to_string(from->user_id()));
-        msgpack::sbuffer eb;
-        msgpack::packer<msgpack::sbuffer> pk(&eb);
-        pk.pack_map(2);
-        pk.pack("ok");
-        pk.pack(false);
-        pk.pack("error");
-        pk.pack("unicast needs dst_user_id");
-        send_reply(from, eb, wire_h.seq);
+      if (!dst_username || dst_username->empty()) {
+        send_err_reply(from, wire_h.seq, "unicast 需要 dst_username");
         co_return;
       }
-      fwd::log::write(fwd::log::Level::kInfo,
-                      "transfer unicast conn=" + std::to_string(from->conn_id()) + " src=" +
-                          std::to_string(from->user_id()) + " dst=" + std::to_string(dst) +
-                          " bytes=" + std::to_string(payload->size()) + " seq=" + std::to_string(wire_h.seq));
-      deliver_unicast(from->user_id(), dst, *payload, wire_h.seq);
+      deliver_unicast_by_username(src_un, src_c, *dst_username, dst_conn, *payload, wire_h.seq);
     } else if (mode == "broadcast") {
-      fwd::log::write(fwd::log::Level::kInfo,
-                      "transfer broadcast conn=" + std::to_string(from->conn_id()) + " src=" +
-                          std::to_string(from->user_id()) + " bytes=" + std::to_string(payload->size()) +
-                          " seq=" + std::to_string(wire_h.seq));
-      deliver_broadcast(from->user_id(), *payload, wire_h.seq);
+      if (!dst_username || dst_username->empty()) {
+        send_err_reply(from, wire_h.seq, "broadcast 需要 dst_username（发往该用户全部连接）");
+        co_return;
+      }
+      deliver_broadcast_to_username(src_un, src_c, *dst_username, *payload, wire_h.seq);
     } else if (mode == "round_robin" || mode == "roundrobin") {
-      fwd::log::write(fwd::log::Level::kInfo,
-                      "transfer round_robin conn=" + std::to_string(from->conn_id()) + " src=" +
-                          std::to_string(from->user_id()) + " bytes=" + std::to_string(payload->size()) +
-                          " interval_ms=" + std::to_string(interval_ms) + " seq=" + std::to_string(wire_h.seq));
-      schedule_round_robin(from->user_id(), *payload, wire_h.seq, interval_ms);
+      if (!dst_username || dst_username->empty()) {
+        send_err_reply(from, wire_h.seq, "round_robin 需要 dst_username（该用户全部连接等间隔轮询）");
+        co_return;
+      }
+      schedule_round_robin_username(src_un, src_c, *dst_username, *payload, wire_h.seq, interval_ms);
     } else {
-      fwd::log::write(fwd::log::Level::kWarn,
-                      "transfer reject unknown mode conn=" + std::to_string(from->conn_id()) + " user_id=" +
-                          std::to_string(from->user_id()) + " mode=" + mode + " seq=" + std::to_string(wire_h.seq));
-      push_event(fwd::log::Level::kWarn,
-                 "transfer reject unknown mode user_id=" + std::to_string(from->user_id()) + " mode=" + mode);
-      msgpack::sbuffer eb;
-      msgpack::packer<msgpack::sbuffer> pk(&eb);
-      pk.pack_map(2);
-      pk.pack("ok");
-      pk.pack(false);
-      pk.pack("error");
-      pk.pack("unknown mode");
-      send_reply(from, eb, wire_h.seq);
+      send_err_reply(from, wire_h.seq, "未知 mode");
       co_return;
     }
     msgpack::sbuffer ack;
@@ -1040,17 +1216,18 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     pk.pack("ok");
     pk.pack(true);
     pk.pack("op");
-    pk.pack("TRANSFER");
+    pk.pack("DATA");
     send_reply(from, ack, wire_h.seq);
     co_return;
   }
 
-  if (*op == "CONTROL") {
+  if (mtype == relay::kClientControl) {
+    if (!from->is_admin_account()) {
+      send_err_reply(from, wire_h.seq, "需要管理员账号权限");
+      co_return;
+    }
     const auto action = map_get_str(mp, "action").value_or("");
     if (action == "list_users") {
-      fwd::log::write(fwd::log::Level::kInfo,
-                      "control list_users conn=" + std::to_string(from->conn_id()) + " user_id=" +
-                          std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
       std::lock_guard lk(mu_);
       msgpack::sbuffer buf;
       msgpack::packer<msgpack::sbuffer> pk(&buf);
@@ -1062,11 +1239,28 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
       pk.pack("users");
       pk.pack_array(user_deque_.size());
       for (const auto& kv : user_deque_) {
-        pk.pack_map(2);
+        std::string uname;
+        auto itn = uid_to_username_.find(kv.first);
+        if (itn != uid_to_username_.end()) uname = itn->second;
+        std::size_t nopen = 0;
+        for (const auto& s : kv.second) {
+          if (s && s->is_open()) ++nopen;
+        }
+        pk.pack_map(3);
         pk.pack("user_id");
         pk.pack(kv.first);
+        pk.pack("username");
+        pk.pack(uname);
         pk.pack("connections");
-        pk.pack(static_cast<unsigned>(kv.second.size()));
+        pk.pack_array(static_cast<unsigned>(nopen));
+        for (const auto& s : kv.second) {
+          if (!s || !s->is_open()) continue;
+          pk.pack_map(2);
+          pk.pack("conn_id");
+          pk.pack(s->conn_id());
+          pk.pack("endpoint");
+          pk.pack(s->endpoint_str());
+        }
       }
       send_reply(from, buf, wire_h.seq);
       co_return;
@@ -1074,70 +1268,40 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     if (action == "kick_user") {
       const auto target = map_get_u64(mp, "target_user_id");
       if (!target) {
-        fwd::log::write(fwd::log::Level::kWarn,
-                        "control kick_user reject missing target conn=" + std::to_string(from->conn_id()) +
-                            " user_id=" + std::to_string(from->user_id()) + " seq=" + std::to_string(wire_h.seq));
-        msgpack::sbuffer eb;
-        msgpack::packer<msgpack::sbuffer> pk(&eb);
-        pk.pack_map(2);
-        pk.pack("ok");
-        pk.pack(false);
-        pk.pack("error");
-        pk.pack("kick_user needs target_user_id");
-        send_reply(from, eb, wire_h.seq);
+        send_err_reply(from, wire_h.seq, "kick_user 需要 target_user_id");
         co_return;
       }
-      fwd::log::write(fwd::log::Level::kWarn,
-                      "control kick_user conn=" + std::to_string(from->conn_id()) + " by_user_id=" +
-                          std::to_string(from->user_id()) + " target_user_id=" + std::to_string(*target) +
-                          " seq=" + std::to_string(wire_h.seq));
-      push_event(fwd::log::Level::kWarn,
-                 "kick_user by=" + std::to_string(from->user_id()) + " target=" + std::to_string(*target));
       std::vector<std::shared_ptr<TcpSession>> victims;
       {
         std::lock_guard lk(mu_);
         auto it = user_deque_.find(*target);
         if (it != user_deque_.end()) {
           victims.assign(it->second.begin(), it->second.end());
-          user_deque_.erase(it);
         }
       }
-      for (const auto& v : victims) v->stop("kicked by CONTROL");
+      const std::string kick_msg =
+          "被管理员踢出：操作者 " + from->username() + "（user_id=" + std::to_string(from->user_id()) +
+          "）执行了 kick_user，目标 user_id=" + std::to_string(*target);
+      for (const auto& v : victims) {
+        if (v) notify_and_close(v, kick_msg, "kick_user");
+      }
       msgpack::sbuffer buf;
       msgpack::packer<msgpack::sbuffer> pk(&buf);
-      pk.pack_map(2);
+      pk.pack_map(3);
       pk.pack("ok");
       pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
       pk.pack("kicked_count");
       pk.pack(static_cast<unsigned>(victims.size()));
       send_reply(from, buf, wire_h.seq);
       co_return;
     }
-    fwd::log::write(fwd::log::Level::kWarn,
-                    "control reject unknown action conn=" + std::to_string(from->conn_id()) + " user_id=" +
-                        std::to_string(from->user_id()) + " action=" + action + " seq=" + std::to_string(wire_h.seq));
-    msgpack::sbuffer eb;
-    msgpack::packer<msgpack::sbuffer> pk(&eb);
-    pk.pack_map(2);
-    pk.pack("ok");
-    pk.pack(false);
-    pk.pack("error");
-    pk.pack("unknown action");
-    send_reply(from, eb, wire_h.seq);
+    send_err_reply(from, wire_h.seq, "unknown action");
     co_return;
   }
 
-  fwd::log::write(fwd::log::Level::kWarn,
-                  "reject unknown op conn=" + std::to_string(from->conn_id()) + " user_id=" +
-                      std::to_string(from->user_id()) + " op=" + *op + " seq=" + std::to_string(wire_h.seq));
-  msgpack::sbuffer eb;
-  msgpack::packer<msgpack::sbuffer> pk(&eb);
-  pk.pack_map(2);
-  pk.pack("ok");
-  pk.pack(false);
-  pk.pack("error");
-  pk.pack("unknown op");
-  send_reply(from, eb, wire_h.seq);
+  send_err_reply(from, wire_h.seq, "未知 msg_type（已登录帧须为 heartbeat=2 / control=3 / data=4）");
   co_return;
 }
 

@@ -62,4 +62,8 @@ set(CMAKE_MAKEFILE_PRODUCTS
 # Dependency information for all targets:
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/asio_forwarder.dir/DependInfo.cmake"
+  "CMakeFiles/asio_forwarder_sdk.dir/DependInfo.cmake"
+  "CMakeFiles/dispatcher_cpp.dir/DependInfo.cmake"
+  "CMakeFiles/worker_cpp.dir/DependInfo.cmake"
+  "CMakeFiles/admin_cpp.dir/DependInfo.cmake"
   )
