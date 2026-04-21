@@ -43,7 +43,9 @@
 
 ## 你将看到什么
 
-- **unicast**：dispatcher 发送 task，worker 处理后回传 result（dispatcher 终端会打印 deliver）。
+- **unicast**：dispatcher 发送 `Task`，worker 处理后回传 `TaskResult`（dispatcher 终端会打印 result）。
 - **broadcast**：dispatcher 发 notice（broadcast），两个 worker 进程都会打印该 deliver（dst_conn_id 不同）。
 - **round_robin**：dispatcher 发 notice（round_robin），两个 worker 进程会“轮流”收到（同样可通过 dst_conn_id 观察）。
+
+本示例的业务 payload 采用统一的 msgpack 结构：`{"type": <string>, "data": <object>}`，并在 C++ 侧用 `MSGPACK_DEFINE` 对 `Task/TaskResult/Notice` 做序列化与反序列化（见 `messages.hpp`）。
 

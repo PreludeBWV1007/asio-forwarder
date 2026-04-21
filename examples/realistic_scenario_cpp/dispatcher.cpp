@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "fwd/relay_client.hpp"
+#include "messages.hpp"
 
 static std::string arg_str(int argc, char** argv, const std::string& k, const std::string& def) {
   for (int i = 1; i + 1 < argc; ++i) {
@@ -22,6 +23,7 @@ static bool has_flag(int argc, char** argv, const std::string& k) {
 }
 
 int main(int argc, char** argv) {
+  std::cout.setf(std::ios::unitbuf);
   const std::string host = arg_str(argc, argv, "--host", "127.0.0.1");
   const auto port = static_cast<std::uint16_t>(std::stoi(arg_str(argc, argv, "--port", "19000")));
   const std::string username = arg_str(argc, argv, "--username", "dispatcher");
@@ -42,28 +44,31 @@ int main(int argc, char** argv) {
 
   while (true) {
     // (A) unicast task -> worker (worker will respond)
-    const std::string payload = std::string("{\"type\":\"task\",\"task_id\":") + std::to_string(task_id) +
-                                ",\"payload\":{\"op\":\"sum\",\"a\":" + std::to_string(task_id) + ",\"b\":" +
-                                std::to_string(task_id + 1) + "}}";
-    c.send_unicast(worker, payload, 0);
+    demo::Task t;
+    t.task_id = task_id;
+    t.a = static_cast<std::int64_t>(task_id);
+    t.b = static_cast<std::int64_t>(task_id + 1);
+    c.send_unicast_typed(worker, "Task", t, 0);
     std::cout << "[dispatcher] sent task_id=" << task_id << "\n";
     ++task_id;
 
     // (B) broadcast demo: send a notice to all connections of the worker username
     if (demo_broadcast) {
-      const std::string notice =
-          std::string("{\"type\":\"notice\",\"mode\":\"broadcast\",\"msg\":\"hello-all-connections\",\"n\":") +
-          std::to_string(task_id) + "}";
-      c.send_broadcast(worker, notice);
+      demo::Notice n;
+      n.mode = "broadcast";
+      n.msg = "hello-all-connections";
+      n.n = task_id;
+      c.send_broadcast_typed(worker, "Notice", n);
       std::cout << "[dispatcher] broadcast notice -> " << worker << "\n";
     }
 
     // (C) round robin demo: send a notice to all connections of the worker username with interval
     if (demo_round_robin) {
-      const std::string rr =
-          std::string("{\"type\":\"notice\",\"mode\":\"round_robin\",\"msg\":\"hello-round-robin\",\"n\":") +
-          std::to_string(task_id) + "}";
-      c.send_round_robin(worker, rr, /*interval_ms*/ 50);
+      demo::Notice n;
+      n.mode = "round_robin";
+      n.msg = "hello-round-robin";
+      n.n = task_id;
+      c.send_round_robin_typed(worker, "Notice", n, /*interval_ms*/ 50);
       std::cout << "[dispatcher] round_robin notice -> " << worker << " interval_ms=50\n";
     }
 
@@ -77,7 +82,14 @@ int main(int argc, char** argv) {
         return 2;
       }
       if (auto* d = std::get_if<fwd::sdk::Deliver>(&*ev)) {
-        std::cout << "[dispatcher] deliver from " << d->src_username << " payload=" << d->payload << "\n";
+        if (d->typed && d->typed->type == "TaskResult") {
+          auto r = d->typed->as<demo::TaskResult>();
+          std::cout << "[dispatcher] result from " << d->src_username << " task_id=" << r.task_id << " ok=" << (r.ok ? "true" : "false")
+                    << " value=" << r.value << "\n";
+        } else {
+          std::cout << "[dispatcher] deliver from " << d->src_username << " payload_bytes=" << d->payload.size()
+                    << (d->typed ? " typed=" + d->typed->type : "") << "\n";
+        }
       }
       // ignore replies
     }

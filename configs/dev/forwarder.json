@@ -10,7 +10,7 @@
   "threads": { "io": 2, "biz": 2 },
   "timeouts": { "read_ms": 120000, "idle_ms": 600000 },
   "limits": { "max_body_len": 67108864 },
-  "metrics": { "interval_ms": 5000 },
+  "metrics": { "interval_ms": 3600000 },
   "flow": {
     "send_queue": { "high_water_bytes": 67108864, "hard_limit_bytes": 268435456, "on_high_water": "drop" }
   },

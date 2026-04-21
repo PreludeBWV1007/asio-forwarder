@@ -100,6 +100,7 @@ python3 tools/webui_server.py --relay-host 127.0.0.1 --relay-port 19000
 
 - `docs/protocol.md`：协议与字段（v2 header、`msg_type`、200/201/202）
 - `docs/client_api.md`：Python `RelayClient` 说明
+- `docs/delivery.md`：**交付清单（Server/Client/SDK/示例/WebUI）**
 - `docs/architecture.md`：组件与线程/配置注意点
 - `docs/data_flow.md`：读帧 → 路由 → 写出数据流
 - `docs/design.md`：取舍与扩展方向

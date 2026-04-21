@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import time
@@ -65,6 +66,12 @@ def index() -> str:
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
+    peer = "unknown"
+    try:
+        peer = str(ws.client)
+    except Exception:
+        pass
+    print(f"[webui] ws accepted peer={peer}", flush=True)
 
     loop = asyncio.get_running_loop()
     q: "asyncio.Queue[dict[str, Any]]" = asyncio.Queue()
@@ -76,7 +83,19 @@ async def ws_endpoint(ws: WebSocket) -> None:
         loop.call_soon_threadsafe(q.put_nowait, ev)
 
     def on_deliver(d: Deliver) -> None:
-        emit({"type": "deliver", "ts_ms": _now_ms(), "data": asdict(d)})
+        dd = asdict(d)
+        pl = dd.get("payload")
+        if isinstance(pl, (bytes, bytearray)):
+            b = bytes(pl)
+            try:
+                dd["payload_utf8"] = b.decode("utf-8")
+            except Exception:
+                dd["payload_utf8"] = None
+            dd["payload_b64"] = base64.b64encode(b).decode("ascii")
+            # remove raw bytes to keep JSON-serializable
+            dd["payload"] = None
+            dd["payload_len"] = len(b)
+        emit({"type": "deliver", "ts_ms": _now_ms(), "data": dd})
 
     def on_reply(r: ServerReply) -> None:
         emit({"type": "reply", "ts_ms": _now_ms(), "seq": r.seq, "body": _safe(r.body)})
@@ -90,7 +109,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
     async def sender_loop() -> None:
         while True:
             ev = await q.get()
-            await ws.send_text(json.dumps(ev, ensure_ascii=False))
+            try:
+                await ws.send_text(json.dumps(ev, ensure_ascii=False))
+            except Exception as e:
+                # If sending fails, stop the loop so the websocket can be torn down.
+                print(f"[webui] ws send failed peer={peer} err={e!r}", flush=True)
+                break
 
     sender_task = asyncio.create_task(sender_loop())
 
@@ -99,6 +123,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
             raw = await ws.receive_text()
             msg = json.loads(raw)
             op = str(msg.get("op", ""))
+            print(f"[webui] ws recv peer={peer} op={op} msg={msg}", flush=True)
 
             if op == "connect":
                 if rc is not None:
@@ -172,6 +197,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
             emit({"type": "error", "ts_ms": _now_ms(), "msg": f"unknown op: {op}"})
 
     except WebSocketDisconnect:
+        print(f"[webui] ws disconnect peer={peer}", flush=True)
         pass
     finally:
         try:
@@ -180,6 +206,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         except Exception:
             pass
         sender_task.cancel()
+        print(f"[webui] ws closed peer={peer}", flush=True)
 
 
 def main() -> int:

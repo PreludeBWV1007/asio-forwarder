@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstring>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -49,6 +50,19 @@ struct RelayClient::Impl {
     if (buf.size()) write_all(buf.data(), buf.size());
   }
 };
+
+namespace detail {
+std::string pack_typed_payload(const std::string& type, const msgpack::object& obj) {
+  msgpack::sbuffer sb;
+  msgpack::packer<msgpack::sbuffer> pk(&sb);
+  pk.pack_map(2);
+  pk.pack("type");
+  pk.pack(type);
+  pk.pack("data");
+  pk.pack(obj);
+  return std::string(sb.data(), sb.size());
+}
+}  // namespace detail
 
 RelayClient::RelayClient() : impl_(new Impl) {}
 RelayClient::~RelayClient() {
@@ -214,6 +228,37 @@ std::optional<Event> RelayClient::recv() {
           }
         }
       }
+
+      // Best-effort typed payload decode: payload bytes are msgpack map {"type":str,"data":<obj>}
+      try {
+        auto poh = msgpack::unpack(d.payload.data(), d.payload.size());
+        msgpack::object po = poh.get();
+        if (po.type == msgpack::type::MAP) {
+          std::optional<std::string> t;
+          const msgpack::object* data_obj = nullptr;
+          const auto& pm = po.via.map;
+          for (std::uint32_t i = 0; i < pm.size; ++i) {
+            if (pm.ptr[i].key.type != msgpack::type::STR) continue;
+            std::string kk;
+            pm.ptr[i].key.convert(kk);
+            if (kk == "type" && pm.ptr[i].val.type == msgpack::type::STR) {
+              std::string tv;
+              pm.ptr[i].val.convert(tv);
+              t = std::move(tv);
+            } else if (kk == "data") {
+              data_obj = &pm.ptr[i].val;
+            }
+          }
+          if (t && data_obj) {
+            TypedPayload tp;
+            tp.type = *t;
+            tp.holder = std::make_shared<TypedPayload::Holder>(std::move(poh), *data_obj);
+            d.typed = std::move(tp);
+          }
+        }
+      } catch (...) {
+      }
+
       return Event{std::move(d)};
     }
 

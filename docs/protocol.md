@@ -89,6 +89,23 @@ Body 为 **msgpack map**：
 - **`interval_ms`**：**round_robin** 使用；`0` 表示使用配置 **`session.round_robin_default_interval_ms`**
 - 受理后回复 **201**：`ok:true`、`op:"DATA"`（**不保证对端应用已读**）
 
+### 业务 payload 推荐约定：`{type, data}`（强烈建议）
+
+由于 `payload` 在传输层是**不透明字节**（服务器不解析），但业务侧通常需要在同一条链路上承载多种 `struct`/对象类型，推荐把 `payload` 统一约定为一个 **msgpack map**：
+
+```text
+{
+  "type": <str>,   // 业务类型标签（字符串）
+  "data": <obj>    // 与 type 对应的业务对象（可为 map/array/number/...）
+}
+```
+
+说明：
+
+- **接收端必须先知道目标类型** 才能把 `data` 反序列化为 C++ `struct`；因此 `type` 是用于运行时分发的关键字段（例如 switch/if + `MSGPACK_DEFINE`）。
+- 若不使用 `type`，接收端只能得到“无类型”的 `msgpack::object`/map，需要业务侧自己约束“这一条链路只会收到某一种类型”，否则很难安全地还原为具体 C++ 类型。
+- 本仓库的 C++ SDK 在接收 **200 DELIVER** 时会对 `payload` 做 best-effort 解码：若满足上述 `{type,data}`，会在 `Deliver.typed` 中给出 `type` 与 `as<T>()` 转换入口。
+
 ## 已登录：CONTROL（`msg_type = 3`）
 
 **仅 `peer_role` 为管理员（`admin`）的账号**可调用；否则 **201** `ok:false`。

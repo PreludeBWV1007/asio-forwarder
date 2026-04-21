@@ -11,19 +11,43 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <variant>
+
+#include <msgpack.hpp>
 
 namespace fwd::sdk {
 
+struct TypedPayload {
+  struct Holder {
+    msgpack::object_handle oh;
+    msgpack::object data;  // points into oh.zone()
+    explicit Holder(msgpack::object_handle&& h, msgpack::object d) : oh(std::move(h)), data(d) {}
+  };
+
+  std::string type;
+  std::shared_ptr<Holder> holder;
+
+  bool valid() const { return static_cast<bool>(holder); }
+
+  template <class T>
+  T as() const;
+};
+
 struct Deliver {
   std::uint32_t seq{0};
-  std::string payload;  // raw bytes
+  std::string payload;  // raw bytes (payload envelope bytes)
   std::uint64_t src_conn_id{0};
   std::uint64_t dst_conn_id{0};
   std::string src_username;
   std::string dst_username;
+  // Optional business payload decoded from payload bytes:
+  // If payload bytes follow {type,data} msgpack envelope, this will be set.
+  std::optional<TypedPayload> typed;
 };
 
 struct ServerReply {
@@ -61,6 +85,16 @@ class RelayClient {
   std::uint32_t send_broadcast(const std::string& dst_username, const std::string& payload);
   std::uint32_t send_round_robin(const std::string& dst_username, const std::string& payload, std::uint64_t interval_ms = 0);
 
+  // DATA with typed payload: payload bytes are msgpack map {"type":<str>,"data":<obj>}
+  template <class T>
+  std::uint32_t send_unicast_typed(const std::string& dst_username, const std::string& type, const T& obj,
+                                  std::uint64_t dst_conn_id = 0);
+  template <class T>
+  std::uint32_t send_broadcast_typed(const std::string& dst_username, const std::string& type, const T& obj);
+  template <class T>
+  std::uint32_t send_round_robin_typed(const std::string& dst_username, const std::string& type, const T& obj,
+                                      std::uint64_t interval_ms = 0);
+
   // CONTROL (admin only)
   std::uint32_t control_list_users();
   std::uint32_t control_kick_user(std::uint64_t target_user_id);
@@ -72,6 +106,43 @@ class RelayClient {
   struct Impl;
   Impl* impl_{nullptr};
 };
+
+// ---- inline template helpers ----
+namespace detail {
+std::string pack_typed_payload(const std::string& type, const msgpack::object& obj);
+
+template <class T>
+std::string pack_typed_payload(const std::string& type, const T& v) {
+  msgpack::sbuffer sb;
+  msgpack::pack(sb, v);
+  auto oh = msgpack::unpack(sb.data(), sb.size());
+  return pack_typed_payload(type, oh.get());
+}
+}  // namespace detail
+
+template <class T>
+std::uint32_t RelayClient::send_unicast_typed(const std::string& dst_username, const std::string& type, const T& obj,
+                                              std::uint64_t dst_conn_id) {
+  return send_unicast(dst_username, detail::pack_typed_payload(type, obj), dst_conn_id);
+}
+template <class T>
+std::uint32_t RelayClient::send_broadcast_typed(const std::string& dst_username, const std::string& type, const T& obj) {
+  return send_broadcast(dst_username, detail::pack_typed_payload(type, obj));
+}
+template <class T>
+std::uint32_t RelayClient::send_round_robin_typed(const std::string& dst_username, const std::string& type, const T& obj,
+                                                  std::uint64_t interval_ms) {
+  return send_round_robin(dst_username, detail::pack_typed_payload(type, obj), interval_ms);
+}
+
+template <class T>
+T TypedPayload::as() const {
+  static_assert(!std::is_reference_v<T>);
+  if (!valid()) throw std::runtime_error("TypedPayload invalid");
+  T out{};
+  holder->data.convert(out);
+  return out;
+}
 
 }  // namespace fwd::sdk
 

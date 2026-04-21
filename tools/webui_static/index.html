@@ -271,6 +271,10 @@
           statusEl.textContent = "WS: connected";
           appendLog("info", { msg: "websocket connected" });
         };
+        ws.onerror = (e) => {
+          // Some failures don't trigger onclose immediately; surface them.
+          appendLog("error", { msg: "websocket error", error: String(e) });
+        };
         ws.onclose = () => {
           statusEl.textContent = "WS: disconnected";
           appendLog("error", { msg: "websocket disconnected" });
@@ -282,11 +286,17 @@
       }
 
       function send(obj) {
+        // Always log outgoing so user can see button clicks even if backend stops responding.
+        appendLog("info", { outgoing: obj });
         if (!ws || ws.readyState !== 1) {
           appendLog("error", { msg: "ws not connected" });
           return;
         }
-        ws.send(JSON.stringify(obj));
+        try {
+          ws.send(JSON.stringify(obj));
+        } catch (e) {
+          appendLog("error", { msg: "ws send failed", error: String(e) });
+        }
       }
 
       el("btnConnect").onclick = () =>
