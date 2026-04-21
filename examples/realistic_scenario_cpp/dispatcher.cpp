@@ -8,6 +8,7 @@
 
 #include "fwd/relay_client.hpp"
 #include "messages.hpp"
+#include "poly_messages.hpp"
 
 static std::string arg_str(int argc, char** argv, const std::string& k, const std::string& def) {
   for (int i = 1; i + 1 < argc; ++i) {
@@ -48,7 +49,9 @@ int main(int argc, char** argv) {
     t.task_id = task_id;
     t.a = static_cast<std::int64_t>(task_id);
     t.b = static_cast<std::int64_t>(task_id + 1);
-    c.send_unicast_typed(worker, "Task", t, 0);
+    demo::TaskPayload tp;
+    tp.task = t;
+    c.send_unicast(worker, tp.pack(), 0);
     std::cout << "[dispatcher] sent task_id=" << task_id << "\n";
     ++task_id;
 
@@ -58,7 +61,9 @@ int main(int argc, char** argv) {
       n.mode = "broadcast";
       n.msg = "hello-all-connections";
       n.n = task_id;
-      c.send_broadcast_typed(worker, "Notice", n);
+      demo::NoticePayload np;
+      np.notice = n;
+      c.send_broadcast(worker, np.pack());
       std::cout << "[dispatcher] broadcast notice -> " << worker << "\n";
     }
 
@@ -68,9 +73,31 @@ int main(int argc, char** argv) {
       n.mode = "round_robin";
       n.msg = "hello-round-robin";
       n.n = task_id;
-      c.send_round_robin_typed(worker, "Notice", n, /*interval_ms*/ 50);
+      demo::NoticePayload np;
+      np.notice = n;
+      c.send_round_robin(worker, np.pack(), /*interval_ms*/ 50);
       std::cout << "[dispatcher] round_robin notice -> " << worker << " interval_ms=50\n";
     }
+
+    // (D) also send a text message (poly kind=Text)
+    demo::TextPayload txt;
+    txt.text = "dispatcher says hi";
+    c.send_unicast(worker, txt.pack(), 0);
+
+    // (E) send a stock tick (poly kind=StockTick)
+    demo::StockTickPayload st;
+    st.tick.symbol = "600519.SH";
+    st.tick.exchange_ts = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    st.tick.last = 1688.5;
+    st.tick.open = 1670.0;
+    st.tick.high = 1699.0;
+    st.tick.low = 1666.0;
+    st.tick.prev_close = 1668.0;
+    st.tick.volume = 123456;
+    st.tick.turnover = 2.34e8;
+    st.tick.is_trading = true;
+    c.send_unicast(worker, st.pack(), 0);
 
     // receive results briefly
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -82,13 +109,32 @@ int main(int argc, char** argv) {
         return 2;
       }
       if (auto* d = std::get_if<fwd::sdk::Deliver>(&*ev)) {
-        if (d->typed && d->typed->type == "TaskResult") {
-          auto r = d->typed->as<demo::TaskResult>();
-          std::cout << "[dispatcher] result from " << d->src_username << " task_id=" << r.task_id << " ok=" << (r.ok ? "true" : "false")
-                    << " value=" << r.value << "\n";
-        } else {
+        try {
+          auto p = demo::decode_poly_payload(d->payload);
+          if (p->kind() == demo::PayloadKind::kTaskResult) {
+            const auto* pr = dynamic_cast<demo::TaskResultPayload*>(p.get());
+            if (pr) {
+              const auto& r = pr->result;
+              std::cout << "[dispatcher] result from " << d->src_username << " task_id=" << r.task_id
+                        << " ok=" << (r.ok ? "true" : "false") << " value=" << r.value << "\n";
+            }
+          } else if (p->kind() == demo::PayloadKind::kText) {
+            const auto* pt = dynamic_cast<demo::TextPayload*>(p.get());
+            std::cout << "[dispatcher] text from " << d->src_username << " msg=" << (pt ? pt->text : "") << "\n";
+          } else if (p->kind() == demo::PayloadKind::kStockTick) {
+            const auto* ps = dynamic_cast<demo::StockTickPayload*>(p.get());
+            if (ps) {
+              const auto& tk = ps->tick;
+              std::cout << "[dispatcher] tick from " << d->src_username << " symbol=" << tk.symbol << " last=" << tk.last
+                        << " vol=" << tk.volume << " ts=" << tk.exchange_ts << "\n";
+            }
+          } else {
+            std::cout << "[dispatcher] deliver from " << d->src_username << " kind=" << p->type_name()
+                      << " payload_bytes=" << d->payload.size() << "\n";
+          }
+        } catch (...) {
           std::cout << "[dispatcher] deliver from " << d->src_username << " payload_bytes=" << d->payload.size()
-                    << (d->typed ? " typed=" + d->typed->type : "") << "\n";
+                    << " (not poly)" << "\n";
         }
       }
       // ignore replies

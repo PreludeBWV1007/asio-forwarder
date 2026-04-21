@@ -217,8 +217,138 @@
           <input id="dstUsername" placeholder="例如：bob" />
           <label>interval_ms（仅 round_robin）</label>
           <input id="intervalMs" value="50" />
-          <label>payload（UTF-8 文本）</label>
-          <textarea id="payload">hello</textarea>
+          <div class="row">
+            <div>
+              <label>payload 类型</label>
+              <select id="payloadKind">
+                <option value="text">文本（UTF-8）</option>
+                <option value="poly_text">结构体：Text</option>
+                <option value="poly_task">结构体：Task</option>
+                <option value="poly_task_result">结构体：TaskResult</option>
+                <option value="poly_notice">结构体：Notice</option>
+                <option value="poly_stock_tick">结构体：StockTick（行情）</option>
+              </select>
+            </div>
+            <div>
+              <label>（结构体）type 名称（可选）</label>
+              <input id="polyType" value="" placeholder="默认按枚举自动填（Text/Task/...）" />
+            </div>
+          </div>
+
+          <div id="panelText">
+            <label>payload（UTF-8 文本）</label>
+            <textarea id="payload">hello</textarea>
+          </div>
+
+          <div id="panelPolyText" style="display: none">
+            <label>Text.text</label>
+            <textarea id="polyText">hello (poly)</textarea>
+          </div>
+
+          <div id="panelTask" style="display: none">
+            <div class="row">
+              <div>
+                <label>Task.task_id</label>
+                <input id="taskId" value="1" />
+              </div>
+              <div>
+                <label>Task.a</label>
+                <input id="taskA" value="1" />
+              </div>
+            </div>
+            <label>Task.b</label>
+            <input id="taskB" value="2" />
+            <div class="pill" style="margin-top: 8px">
+              说明：为兼容 C++ MSGPACK_DEFINE，本页面会把 Task.data 打包成数组 [task_id, a, b]
+            </div>
+          </div>
+
+          <div id="panelTaskResult" style="display: none">
+            <div class="row">
+              <div>
+                <label>TaskResult.task_id</label>
+                <input id="trTaskId" value="1" />
+              </div>
+              <div>
+                <label>TaskResult.ok（true/false）</label>
+                <input id="trOk" value="true" />
+              </div>
+            </div>
+            <label>TaskResult.value</label>
+            <input id="trValue" value="3" />
+            <div class="pill" style="margin-top: 8px">
+              说明：为兼容 C++ MSGPACK_DEFINE，本页面会把 TaskResult.data 打包成数组 [task_id, ok, value]
+            </div>
+          </div>
+
+          <div id="panelNotice" style="display: none">
+            <div class="row">
+              <div>
+                <label>Notice.mode</label>
+                <input id="noticeMode" value="broadcast" />
+              </div>
+              <div>
+                <label>Notice.n</label>
+                <input id="noticeN" value="1" />
+              </div>
+            </div>
+            <label>Notice.msg</label>
+            <input id="noticeMsg" value="hello notice" />
+            <div class="pill" style="margin-top: 8px">
+              说明：为兼容 C++ MSGPACK_DEFINE，本页面会把 Notice.data 打包成数组 [mode, msg, n]
+            </div>
+          </div>
+
+          <div id="panelStockTick" style="display: none">
+            <label>symbol（例如 600519.SH）</label>
+            <input id="tickSymbol" value="600519.SH" />
+            <div class="row">
+              <div>
+                <label>exchange_ts（ms）</label>
+                <input id="tickTs" value="0" />
+              </div>
+              <div>
+                <label>last</label>
+                <input id="tickLast" value="1688.5" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>open</label>
+                <input id="tickOpen" value="1670" />
+              </div>
+              <div>
+                <label>high</label>
+                <input id="tickHigh" value="1699" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>low</label>
+                <input id="tickLow" value="1666" />
+              </div>
+              <div>
+                <label>prev_close</label>
+                <input id="tickPrevClose" value="1668" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>volume（整数）</label>
+                <input id="tickVol" value="123456" />
+              </div>
+              <div>
+                <label>turnover</label>
+                <input id="tickTurnover" value="234000000" />
+              </div>
+            </div>
+            <label>is_trading（true/false）</label>
+            <input id="tickTrading" value="true" />
+            <div class="pill" style="margin-top: 8px">
+              说明：为兼容 C++ MSGPACK_DEFINE，本页面会把 StockTick.data 打包成数组 [symbol, exchange_ts, last, open, high, low, prev_close, volume, turnover, is_trading]
+            </div>
+          </div>
+
           <div class="btns">
             <button id="btnSend">send DATA</button>
             <button id="btnListUsers" class="secondary">CONTROL list_users</button>
@@ -327,19 +457,139 @@
       el("btnHB").onclick = () => send({ op: "heartbeat" });
 
       el("btnSend").onclick = () =>
-        send({
-          op: "send",
-          mode: el("mode").value,
-          dst_username: el("dstUsername").value.trim(),
-          dst_conn_id: Number(el("dstConnId").value.trim()),
-          interval_ms: Number(el("intervalMs").value.trim()),
-          payload: el("payload").value,
-        });
+        (() => {
+          const mode = el("mode").value;
+          const dst_username = el("dstUsername").value.trim();
+          const dst_conn_id = Number(el("dstConnId").value.trim());
+          const interval_ms = Number(el("intervalMs").value.trim());
+          const pk = el("payloadKind").value;
+
+          // kind enum must match examples/realistic_scenario_cpp/poly_messages.hpp
+          const KIND_TEXT = 1;
+          const KIND_TASK = 2;
+          const KIND_TASK_RESULT = 3;
+          const KIND_NOTICE = 4;
+          const KIND_STOCK_TICK = 5;
+
+          const typeOverride = el("polyType").value.trim();
+
+          if (pk === "text") {
+            send({ op: "send", mode, dst_username, dst_conn_id, interval_ms, payload: el("payload").value });
+            return;
+          }
+
+          if (pk === "poly_text") {
+            send({
+              op: "send_poly",
+              mode,
+              dst_username,
+              dst_conn_id,
+              interval_ms,
+              kind: KIND_TEXT,
+              type: typeOverride || "Text",
+              data: el("polyText").value,
+            });
+            return;
+          }
+
+          if (pk === "poly_task") {
+            const task_id = Number(el("taskId").value.trim());
+            const a = Number(el("taskA").value.trim());
+            const b = Number(el("taskB").value.trim());
+            send({
+              op: "send_poly",
+              mode,
+              dst_username,
+              dst_conn_id,
+              interval_ms,
+              kind: KIND_TASK,
+              type: typeOverride || "Task",
+              data: [task_id, a, b],
+            });
+            return;
+          }
+
+          if (pk === "poly_task_result") {
+            const task_id = Number(el("trTaskId").value.trim());
+            const okRaw = el("trOk").value.trim().toLowerCase();
+            const ok = okRaw === "true" || okRaw === "1" || okRaw === "yes" || okRaw === "y";
+            const value = Number(el("trValue").value.trim());
+            send({
+              op: "send_poly",
+              mode,
+              dst_username,
+              dst_conn_id,
+              interval_ms,
+              kind: KIND_TASK_RESULT,
+              type: typeOverride || "TaskResult",
+              data: [task_id, ok, value],
+            });
+            return;
+          }
+
+          if (pk === "poly_notice") {
+            const mode2 = el("noticeMode").value.trim();
+            const msg = el("noticeMsg").value;
+            const n = Number(el("noticeN").value.trim());
+            send({
+              op: "send_poly",
+              mode,
+              dst_username,
+              dst_conn_id,
+              interval_ms,
+              kind: KIND_NOTICE,
+              type: typeOverride || "Notice",
+              data: [mode2, msg, n],
+            });
+            return;
+          }
+
+          if (pk === "poly_stock_tick") {
+            const symbol = el("tickSymbol").value.trim();
+            let ts = Number(el("tickTs").value.trim());
+            if (!Number.isFinite(ts) || ts <= 0) ts = Date.now();
+            const last = Number(el("tickLast").value.trim());
+            const open = Number(el("tickOpen").value.trim());
+            const high = Number(el("tickHigh").value.trim());
+            const low = Number(el("tickLow").value.trim());
+            const prev_close = Number(el("tickPrevClose").value.trim());
+            const volume = Number(el("tickVol").value.trim());
+            const turnover = Number(el("tickTurnover").value.trim());
+            const tradingRaw = el("tickTrading").value.trim().toLowerCase();
+            const is_trading = tradingRaw === "true" || tradingRaw === "1" || tradingRaw === "yes" || tradingRaw === "y";
+            send({
+              op: "send_poly",
+              mode,
+              dst_username,
+              dst_conn_id,
+              interval_ms,
+              kind: KIND_STOCK_TICK,
+              type: typeOverride || "StockTick",
+              data: [symbol, ts, last, open, high, low, prev_close, volume, turnover, is_trading],
+            });
+            return;
+          }
+
+          send({ op: "send", mode, dst_username, dst_conn_id, interval_ms, payload: el("payload").value });
+        })();
 
       el("btnListUsers").onclick = () => send({ op: "control", action: "list_users" });
       el("btnKick").onclick = () =>
         send({ op: "control", action: "kick_user", target_user_id: Number(el("targetUserId").value.trim()) });
       el("btnClear").onclick = () => (logEl.textContent = "");
+
+      function setPanels(kind) {
+        const show = (id, on) => (el(id).style.display = on ? "" : "none");
+        show("panelText", kind === "text");
+        show("panelPolyText", kind === "poly_text");
+        show("panelTask", kind === "poly_task");
+        show("panelTaskResult", kind === "poly_task_result");
+        show("panelNotice", kind === "poly_notice");
+        show("panelStockTick", kind === "poly_stock_tick");
+      }
+
+      el("payloadKind").onchange = () => setPanels(el("payloadKind").value);
+      setPanels(el("payloadKind").value);
 
       connectWS();
     </script>

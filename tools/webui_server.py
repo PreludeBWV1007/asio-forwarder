@@ -23,6 +23,7 @@ import time
 from dataclasses import asdict
 from typing import Any, Optional
 
+import msgpack
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
@@ -92,6 +93,13 @@ async def ws_endpoint(ws: WebSocket) -> None:
             except Exception:
                 dd["payload_utf8"] = None
             dd["payload_b64"] = base64.b64encode(b).decode("ascii")
+            # Best-effort: decode poly envelope {kind,type,data}
+            try:
+                o = msgpack.unpackb(b, raw=False)
+                if isinstance(o, dict) and "kind" in o and "type" in o and "data" in o:
+                    dd["payload_poly"] = _safe(o)
+            except Exception:
+                pass
             # remove raw bytes to keep JSON-serializable
             dd["payload"] = None
             dd["payload_len"] = len(b)
@@ -180,6 +188,29 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     emit({"type": "error", "ts_ms": _now_ms(), "msg": f"unknown mode: {mode}"})
                     continue
                 emit({"type": "info", "ts_ms": _now_ms(), "msg": f"DATA({mode}) sent seq={seq}"})
+                continue
+
+            if op == "send_poly":
+                mode = str(msg.get("mode", "unicast"))
+                dst_username = str(msg.get("dst_username", ""))
+                dst_conn_id = int(msg.get("dst_conn_id", 0))
+                interval_ms = int(msg.get("interval_ms", 0))
+
+                kind = int(msg.get("kind", 0))
+                type_name = str(msg.get("type", "")) or f"Kind{kind}"
+                data = msg.get("data", None)
+                payload = msgpack.packb({"kind": kind, "type": type_name, "data": data}, use_bin_type=True)
+
+                if mode == "unicast":
+                    seq = rc.send_unicast(dst_username, payload, dst_conn_id=dst_conn_id)
+                elif mode == "broadcast":
+                    seq = rc.send_broadcast_to_user(dst_username, payload)
+                elif mode in ("round_robin", "roundrobin"):
+                    seq = rc.send_round_robin_to_user(dst_username, payload, interval_ms=interval_ms)
+                else:
+                    emit({"type": "error", "ts_ms": _now_ms(), "msg": f"unknown mode: {mode}"})
+                    continue
+                emit({"type": "info", "ts_ms": _now_ms(), "msg": f"DATA({mode}) poly(kind={kind} type={type_name}) sent seq={seq}"})
                 continue
 
             if op == "control":

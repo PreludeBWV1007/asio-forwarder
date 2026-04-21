@@ -35,7 +35,7 @@
 - `connect(host, port)`
 - `login(username, password, peer_role, register)`
 - `send_unicast/broadcast/round_robin(dst_username, payload, ...)`
-- （推荐）`send_*_typed(dst_username, type, obj, ...)`：把业务 payload 统一封装为 msgpack `{type,data}`（详见 `docs/protocol.md`）
+- （可选）`send_*_typed(dst_username, type, obj, ...)`：把业务 payload 封装为 msgpack `{"type": <string>, "data": <object>}`（SDK 接收端会 best-effort 解包；详见 `docs/protocol.md`）
 - `recv()` 收 `Deliver/ServerReply/Kick`
 
 ### 必交付：C++ 真实业务模拟（示例工程）
@@ -50,7 +50,10 @@
 用途：
 - 展示 **注册/登录、unicast、broadcast、round_robin、CONTROL、KICK** 的完整端到端流程
 - 展示“同一用户名多连接”的真实情况（同一用户开多个进程连接）
-- 展示“业务 payload 推荐结构 `{type,data}`”与 C++ `struct` 的序列化/反序列化（`MSGPACK_DEFINE`）
+- 展示“业务 payload 可自定义为任意二进制 bytes”，以及一种可落地的“多态信封”结构 `{"kind","type","data"}`：
+  - `kind` 用于接收端按枚举分发反序列化
+  - `type` 便于日志/前端展示
+  - `data` 为业务对象（C++ 侧用 `MSGPACK_DEFINE`）
 
 运行步骤见：`examples/realistic_scenario_cpp/README.md`
 
@@ -74,7 +77,7 @@ python3 tools/webui_server.py --relay-host 127.0.0.1 --relay-port 19000
 
 打开：`http://127.0.0.1:8080`
 
-> 说明：WebUI 是“演示/联调工具”，不影响 C++ 交付主链路；生产交付可以不包含 Python。
+> 说明：WebUI 是“演示/联调工具”，不影响 C++ 交付主链路；生产交付可以不包含 Python。WebUI 支持发送 UTF-8 文本，也支持按页面枚举结构体字段组装并发送 `{"kind","type","data"}` 形式的 msgpack payload（用于验证结构体传输）。
 
 ## 交付时建议打包的最小集合（推荐）
 

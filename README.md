@@ -78,6 +78,8 @@ python3 tools/webui_server.py --relay-host 127.0.0.1 --relay-port 19000
 
 然后打开 `http://127.0.0.1:8080`。
 
+说明：WebUI 支持发送普通 UTF-8 文本，也支持按页面选择并录入若干枚举结构体（如 `Task/Notice/StockTick`），由桥接服务打包为 msgpack `{"kind","type","data"}` payload 后发送，用于验证“结构体/多态消息”端到端传输。
+
 ## 最终交付：接口（SDK）与真实场景示例
 
 - **C++ SDK（接口封装）**：`include/fwd/relay_client.hpp` + `src/relay_client.cpp`（CMake target：`asio_forwarder_sdk`）  

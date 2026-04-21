@@ -46,6 +46,13 @@
 - **unicast**：dispatcher 发送 `Task`，worker 处理后回传 `TaskResult`（dispatcher 终端会打印 result）。
 - **broadcast**：dispatcher 发 notice（broadcast），两个 worker 进程都会打印该 deliver（dst_conn_id 不同）。
 - **round_robin**：dispatcher 发 notice（round_robin），两个 worker 进程会“轮流”收到（同样可通过 dst_conn_id 观察）。
+- **结构体传输（示例）**：dispatcher 还会发送一个 `StockTick`（模拟券商行情推送），worker/dispatcher 会按 `kind` 反序列化还原并打印关键字段。
 
-本示例的业务 payload 采用统一的 msgpack 结构：`{"type": <string>, "data": <object>}`，并在 C++ 侧用 `MSGPACK_DEFINE` 对 `Task/TaskResult/Notice` 做序列化与反序列化（见 `messages.hpp`）。
+本示例的业务 payload 采用统一的 msgpack “多态信封”结构：`{"kind": <enum-int>, "type": <string>, "data": <object>}`。
+
+- `kind`：用于接收端快速分发反序列化逻辑（枚举值见 `poly_messages.hpp`）
+- `type`：携带类型名称（便于日志/前端展示）
+- `data`：真正的业务对象（`Task/TaskResult/Notice` 等）
+
+业务结构体依然通过 `MSGPACK_DEFINE` 做序列化与反序列化（见 `messages.hpp`）。
 
