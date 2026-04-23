@@ -72,28 +72,28 @@ include CMakeFiles/asio_forwarder.dir/flags.make
 CMakeFiles/asio_forwarder.dir/codegen:
 .PHONY : CMakeFiles/asio_forwarder.dir/codegen
 
-CMakeFiles/asio_forwarder.dir/src/main.cpp.o: CMakeFiles/asio_forwarder.dir/flags.make
-CMakeFiles/asio_forwarder.dir/src/main.cpp.o: /home/xuanrui/asio-forwarder/src/main.cpp
-CMakeFiles/asio_forwarder.dir/src/main.cpp.o: CMakeFiles/asio_forwarder.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/asio_forwarder.dir/src/main.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/asio_forwarder.dir/src/main.cpp.o -MF CMakeFiles/asio_forwarder.dir/src/main.cpp.o.d -o CMakeFiles/asio_forwarder.dir/src/main.cpp.o -c /home/xuanrui/asio-forwarder/src/main.cpp
+CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: CMakeFiles/asio_forwarder.dir/flags.make
+CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp
+CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: CMakeFiles/asio_forwarder.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -MF CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o.d -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -c /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp
 
-CMakeFiles/asio_forwarder.dir/src/main.cpp.i: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/asio_forwarder.dir/src/main.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/xuanrui/asio-forwarder/src/main.cpp > CMakeFiles/asio_forwarder.dir/src/main.cpp.i
+CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp > CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i
 
-CMakeFiles/asio_forwarder.dir/src/main.cpp.s: cmake_force
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/asio_forwarder.dir/src/main.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/xuanrui/asio-forwarder/src/main.cpp -o CMakeFiles/asio_forwarder.dir/src/main.cpp.s
+CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s"
+	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
 
 # Object files for target asio_forwarder
 asio_forwarder_OBJECTS = \
-"CMakeFiles/asio_forwarder.dir/src/main.cpp.o"
+"CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o"
 
 # External object files for target asio_forwarder
 asio_forwarder_EXTERNAL_OBJECTS =
 
-asio_forwarder: CMakeFiles/asio_forwarder.dir/src/main.cpp.o
+asio_forwarder: CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o
 asio_forwarder: CMakeFiles/asio_forwarder.dir/build.make
 asio_forwarder: CMakeFiles/asio_forwarder.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable asio_forwarder"

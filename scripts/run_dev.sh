@@ -7,5 +7,5 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-"$ROOT/build/asio_forwarder" "$ROOT/configs/dev/forwarder.json"
+"$ROOT/build/asio_forwarder" "$ROOT/deliver/server/forwarder.json"
 

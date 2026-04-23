@@ -1,6 +1,6 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/asio_forwarder.dir/src/main.cpp.o"
-  "CMakeFiles/asio_forwarder.dir/src/main.cpp.o.d"
+  "CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o"
+  "CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o.d"
   "asio_forwarder"
   "asio_forwarder.pdb"
 )

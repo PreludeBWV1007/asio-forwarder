@@ -237,185 +237,185 @@ admin_cpp/fast:
 .PHONY : admin_cpp/fast
 
 #=============================================================================
-# Target rules for targets named asio_forwarder_client_smoke
+# Target rules for targets named forwarder_cpp_smoke
 
 # Build rule for target.
-asio_forwarder_client_smoke: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 asio_forwarder_client_smoke
-.PHONY : asio_forwarder_client_smoke
+forwarder_cpp_smoke: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 forwarder_cpp_smoke
+.PHONY : forwarder_cpp_smoke
 
 # fast build rule for target.
-asio_forwarder_client_smoke/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/build
-.PHONY : asio_forwarder_client_smoke/fast
+forwarder_cpp_smoke/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_cpp_smoke.dir/build.make CMakeFiles/forwarder_cpp_smoke.dir/build
+.PHONY : forwarder_cpp_smoke/fast
 
-examples/asio_forwarder_client_smoke/smoke.o: examples/asio_forwarder_client_smoke/smoke.cpp.o
-.PHONY : examples/asio_forwarder_client_smoke/smoke.o
-
-# target to build an object file
-examples/asio_forwarder_client_smoke/smoke.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.o
-.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.o
-
-examples/asio_forwarder_client_smoke/smoke.i: examples/asio_forwarder_client_smoke/smoke.cpp.i
-.PHONY : examples/asio_forwarder_client_smoke/smoke.i
-
-# target to preprocess a source file
-examples/asio_forwarder_client_smoke/smoke.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.i
-.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.i
-
-examples/asio_forwarder_client_smoke/smoke.s: examples/asio_forwarder_client_smoke/smoke.cpp.s
-.PHONY : examples/asio_forwarder_client_smoke/smoke.s
-
-# target to generate assembly for a file
-examples/asio_forwarder_client_smoke/smoke.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.s
-.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.s
-
-examples/realistic_scenario_cpp/admin.o: examples/realistic_scenario_cpp/admin.cpp.o
-.PHONY : examples/realistic_scenario_cpp/admin.o
+deliver/client/src/asio_forwarder_client.o: deliver/client/src/asio_forwarder_client.cpp.o
+.PHONY : deliver/client/src/asio_forwarder_client.o
 
 # target to build an object file
-examples/realistic_scenario_cpp/admin.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/examples/realistic_scenario_cpp/admin.cpp.o
-.PHONY : examples/realistic_scenario_cpp/admin.cpp.o
+deliver/client/src/asio_forwarder_client.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/asio_forwarder_client.cpp.o
+.PHONY : deliver/client/src/asio_forwarder_client.cpp.o
 
-examples/realistic_scenario_cpp/admin.i: examples/realistic_scenario_cpp/admin.cpp.i
-.PHONY : examples/realistic_scenario_cpp/admin.i
+deliver/client/src/asio_forwarder_client.i: deliver/client/src/asio_forwarder_client.cpp.i
+.PHONY : deliver/client/src/asio_forwarder_client.i
 
 # target to preprocess a source file
-examples/realistic_scenario_cpp/admin.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/examples/realistic_scenario_cpp/admin.cpp.i
-.PHONY : examples/realistic_scenario_cpp/admin.cpp.i
+deliver/client/src/asio_forwarder_client.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/asio_forwarder_client.cpp.i
+.PHONY : deliver/client/src/asio_forwarder_client.cpp.i
 
-examples/realistic_scenario_cpp/admin.s: examples/realistic_scenario_cpp/admin.cpp.s
-.PHONY : examples/realistic_scenario_cpp/admin.s
+deliver/client/src/asio_forwarder_client.s: deliver/client/src/asio_forwarder_client.cpp.s
+.PHONY : deliver/client/src/asio_forwarder_client.s
 
 # target to generate assembly for a file
-examples/realistic_scenario_cpp/admin.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/examples/realistic_scenario_cpp/admin.cpp.s
-.PHONY : examples/realistic_scenario_cpp/admin.cpp.s
+deliver/client/src/asio_forwarder_client.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/asio_forwarder_client.cpp.s
+.PHONY : deliver/client/src/asio_forwarder_client.cpp.s
 
-examples/realistic_scenario_cpp/dispatcher.o: examples/realistic_scenario_cpp/dispatcher.cpp.o
-.PHONY : examples/realistic_scenario_cpp/dispatcher.o
+deliver/client/src/relay_client.o: deliver/client/src/relay_client.cpp.o
+.PHONY : deliver/client/src/relay_client.o
 
 # target to build an object file
-examples/realistic_scenario_cpp/dispatcher.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/examples/realistic_scenario_cpp/dispatcher.cpp.o
-.PHONY : examples/realistic_scenario_cpp/dispatcher.cpp.o
+deliver/client/src/relay_client.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/relay_client.cpp.o
+.PHONY : deliver/client/src/relay_client.cpp.o
 
-examples/realistic_scenario_cpp/dispatcher.i: examples/realistic_scenario_cpp/dispatcher.cpp.i
-.PHONY : examples/realistic_scenario_cpp/dispatcher.i
+deliver/client/src/relay_client.i: deliver/client/src/relay_client.cpp.i
+.PHONY : deliver/client/src/relay_client.i
 
 # target to preprocess a source file
-examples/realistic_scenario_cpp/dispatcher.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/examples/realistic_scenario_cpp/dispatcher.cpp.i
-.PHONY : examples/realistic_scenario_cpp/dispatcher.cpp.i
+deliver/client/src/relay_client.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/relay_client.cpp.i
+.PHONY : deliver/client/src/relay_client.cpp.i
 
-examples/realistic_scenario_cpp/dispatcher.s: examples/realistic_scenario_cpp/dispatcher.cpp.s
-.PHONY : examples/realistic_scenario_cpp/dispatcher.s
+deliver/client/src/relay_client.s: deliver/client/src/relay_client.cpp.s
+.PHONY : deliver/client/src/relay_client.s
 
 # target to generate assembly for a file
-examples/realistic_scenario_cpp/dispatcher.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/examples/realistic_scenario_cpp/dispatcher.cpp.s
-.PHONY : examples/realistic_scenario_cpp/dispatcher.cpp.s
+deliver/client/src/relay_client.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/deliver/client/src/relay_client.cpp.s
+.PHONY : deliver/client/src/relay_client.cpp.s
 
-examples/realistic_scenario_cpp/worker.o: examples/realistic_scenario_cpp/worker.cpp.o
-.PHONY : examples/realistic_scenario_cpp/worker.o
+deliver/server/src/main.o: deliver/server/src/main.cpp.o
+.PHONY : deliver/server/src/main.o
 
 # target to build an object file
-examples/realistic_scenario_cpp/worker.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/examples/realistic_scenario_cpp/worker.cpp.o
-.PHONY : examples/realistic_scenario_cpp/worker.cpp.o
+deliver/server/src/main.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o
+.PHONY : deliver/server/src/main.cpp.o
 
-examples/realistic_scenario_cpp/worker.i: examples/realistic_scenario_cpp/worker.cpp.i
-.PHONY : examples/realistic_scenario_cpp/worker.i
+deliver/server/src/main.i: deliver/server/src/main.cpp.i
+.PHONY : deliver/server/src/main.i
 
 # target to preprocess a source file
-examples/realistic_scenario_cpp/worker.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/examples/realistic_scenario_cpp/worker.cpp.i
-.PHONY : examples/realistic_scenario_cpp/worker.cpp.i
+deliver/server/src/main.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i
+.PHONY : deliver/server/src/main.cpp.i
 
-examples/realistic_scenario_cpp/worker.s: examples/realistic_scenario_cpp/worker.cpp.s
-.PHONY : examples/realistic_scenario_cpp/worker.s
+deliver/server/src/main.s: deliver/server/src/main.cpp.s
+.PHONY : deliver/server/src/main.s
 
 # target to generate assembly for a file
-examples/realistic_scenario_cpp/worker.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/examples/realistic_scenario_cpp/worker.cpp.s
-.PHONY : examples/realistic_scenario_cpp/worker.cpp.s
+deliver/server/src/main.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
+.PHONY : deliver/server/src/main.cpp.s
 
-src/asio_forwarder_client.o: src/asio_forwarder_client.cpp.o
-.PHONY : src/asio_forwarder_client.o
+local/examples/realistic_scenario_cpp/admin.o: local/examples/realistic_scenario_cpp/admin.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/admin.o
 
 # target to build an object file
-src/asio_forwarder_client.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.o
-.PHONY : src/asio_forwarder_client.cpp.o
+local/examples/realistic_scenario_cpp/admin.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/local/examples/realistic_scenario_cpp/admin.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/admin.cpp.o
 
-src/asio_forwarder_client.i: src/asio_forwarder_client.cpp.i
-.PHONY : src/asio_forwarder_client.i
+local/examples/realistic_scenario_cpp/admin.i: local/examples/realistic_scenario_cpp/admin.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/admin.i
 
 # target to preprocess a source file
-src/asio_forwarder_client.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.i
-.PHONY : src/asio_forwarder_client.cpp.i
+local/examples/realistic_scenario_cpp/admin.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/local/examples/realistic_scenario_cpp/admin.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/admin.cpp.i
 
-src/asio_forwarder_client.s: src/asio_forwarder_client.cpp.s
-.PHONY : src/asio_forwarder_client.s
+local/examples/realistic_scenario_cpp/admin.s: local/examples/realistic_scenario_cpp/admin.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/admin.s
 
 # target to generate assembly for a file
-src/asio_forwarder_client.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.s
-.PHONY : src/asio_forwarder_client.cpp.s
+local/examples/realistic_scenario_cpp/admin.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/local/examples/realistic_scenario_cpp/admin.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/admin.cpp.s
 
-src/main.o: src/main.cpp.o
-.PHONY : src/main.o
+local/examples/realistic_scenario_cpp/dispatcher.o: local/examples/realistic_scenario_cpp/dispatcher.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.o
 
 # target to build an object file
-src/main.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/src/main.cpp.o
-.PHONY : src/main.cpp.o
+local/examples/realistic_scenario_cpp/dispatcher.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/local/examples/realistic_scenario_cpp/dispatcher.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.cpp.o
 
-src/main.i: src/main.cpp.i
-.PHONY : src/main.i
+local/examples/realistic_scenario_cpp/dispatcher.i: local/examples/realistic_scenario_cpp/dispatcher.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.i
 
 # target to preprocess a source file
-src/main.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/src/main.cpp.i
-.PHONY : src/main.cpp.i
+local/examples/realistic_scenario_cpp/dispatcher.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/local/examples/realistic_scenario_cpp/dispatcher.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.cpp.i
 
-src/main.s: src/main.cpp.s
-.PHONY : src/main.s
+local/examples/realistic_scenario_cpp/dispatcher.s: local/examples/realistic_scenario_cpp/dispatcher.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.s
 
 # target to generate assembly for a file
-src/main.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/src/main.cpp.s
-.PHONY : src/main.cpp.s
+local/examples/realistic_scenario_cpp/dispatcher.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/dispatcher_cpp.dir/build.make CMakeFiles/dispatcher_cpp.dir/local/examples/realistic_scenario_cpp/dispatcher.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/dispatcher.cpp.s
 
-src/relay_client.o: src/relay_client.cpp.o
-.PHONY : src/relay_client.o
+local/examples/realistic_scenario_cpp/worker.o: local/examples/realistic_scenario_cpp/worker.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/worker.o
 
 # target to build an object file
-src/relay_client.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/relay_client.cpp.o
-.PHONY : src/relay_client.cpp.o
+local/examples/realistic_scenario_cpp/worker.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/local/examples/realistic_scenario_cpp/worker.cpp.o
+.PHONY : local/examples/realistic_scenario_cpp/worker.cpp.o
 
-src/relay_client.i: src/relay_client.cpp.i
-.PHONY : src/relay_client.i
+local/examples/realistic_scenario_cpp/worker.i: local/examples/realistic_scenario_cpp/worker.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/worker.i
 
 # target to preprocess a source file
-src/relay_client.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/relay_client.cpp.i
-.PHONY : src/relay_client.cpp.i
+local/examples/realistic_scenario_cpp/worker.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/local/examples/realistic_scenario_cpp/worker.cpp.i
+.PHONY : local/examples/realistic_scenario_cpp/worker.cpp.i
 
-src/relay_client.s: src/relay_client.cpp.s
-.PHONY : src/relay_client.s
+local/examples/realistic_scenario_cpp/worker.s: local/examples/realistic_scenario_cpp/worker.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/worker.s
 
 # target to generate assembly for a file
-src/relay_client.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/relay_client.cpp.s
-.PHONY : src/relay_client.cpp.s
+local/examples/realistic_scenario_cpp/worker.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/local/examples/realistic_scenario_cpp/worker.cpp.s
+.PHONY : local/examples/realistic_scenario_cpp/worker.cpp.s
+
+local/tests/cpp_smoke.o: local/tests/cpp_smoke.cpp.o
+.PHONY : local/tests/cpp_smoke.o
+
+# target to build an object file
+local/tests/cpp_smoke.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_cpp_smoke.dir/build.make CMakeFiles/forwarder_cpp_smoke.dir/local/tests/cpp_smoke.cpp.o
+.PHONY : local/tests/cpp_smoke.cpp.o
+
+local/tests/cpp_smoke.i: local/tests/cpp_smoke.cpp.i
+.PHONY : local/tests/cpp_smoke.i
+
+# target to preprocess a source file
+local/tests/cpp_smoke.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_cpp_smoke.dir/build.make CMakeFiles/forwarder_cpp_smoke.dir/local/tests/cpp_smoke.cpp.i
+.PHONY : local/tests/cpp_smoke.cpp.i
+
+local/tests/cpp_smoke.s: local/tests/cpp_smoke.cpp.s
+.PHONY : local/tests/cpp_smoke.s
+
+# target to generate assembly for a file
+local/tests/cpp_smoke.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_cpp_smoke.dir/build.make CMakeFiles/forwarder_cpp_smoke.dir/local/tests/cpp_smoke.cpp.s
+.PHONY : local/tests/cpp_smoke.cpp.s
 
 # Help Target
 help:
@@ -432,31 +432,31 @@ help:
 	@echo "... test"
 	@echo "... admin_cpp"
 	@echo "... asio_forwarder"
-	@echo "... asio_forwarder_client_smoke"
 	@echo "... asio_forwarder_sdk"
 	@echo "... dispatcher_cpp"
+	@echo "... forwarder_cpp_smoke"
 	@echo "... worker_cpp"
-	@echo "... examples/asio_forwarder_client_smoke/smoke.o"
-	@echo "... examples/asio_forwarder_client_smoke/smoke.i"
-	@echo "... examples/asio_forwarder_client_smoke/smoke.s"
-	@echo "... examples/realistic_scenario_cpp/admin.o"
-	@echo "... examples/realistic_scenario_cpp/admin.i"
-	@echo "... examples/realistic_scenario_cpp/admin.s"
-	@echo "... examples/realistic_scenario_cpp/dispatcher.o"
-	@echo "... examples/realistic_scenario_cpp/dispatcher.i"
-	@echo "... examples/realistic_scenario_cpp/dispatcher.s"
-	@echo "... examples/realistic_scenario_cpp/worker.o"
-	@echo "... examples/realistic_scenario_cpp/worker.i"
-	@echo "... examples/realistic_scenario_cpp/worker.s"
-	@echo "... src/asio_forwarder_client.o"
-	@echo "... src/asio_forwarder_client.i"
-	@echo "... src/asio_forwarder_client.s"
-	@echo "... src/main.o"
-	@echo "... src/main.i"
-	@echo "... src/main.s"
-	@echo "... src/relay_client.o"
-	@echo "... src/relay_client.i"
-	@echo "... src/relay_client.s"
+	@echo "... deliver/client/src/asio_forwarder_client.o"
+	@echo "... deliver/client/src/asio_forwarder_client.i"
+	@echo "... deliver/client/src/asio_forwarder_client.s"
+	@echo "... deliver/client/src/relay_client.o"
+	@echo "... deliver/client/src/relay_client.i"
+	@echo "... deliver/client/src/relay_client.s"
+	@echo "... deliver/server/src/main.o"
+	@echo "... deliver/server/src/main.i"
+	@echo "... deliver/server/src/main.s"
+	@echo "... local/examples/realistic_scenario_cpp/admin.o"
+	@echo "... local/examples/realistic_scenario_cpp/admin.i"
+	@echo "... local/examples/realistic_scenario_cpp/admin.s"
+	@echo "... local/examples/realistic_scenario_cpp/dispatcher.o"
+	@echo "... local/examples/realistic_scenario_cpp/dispatcher.i"
+	@echo "... local/examples/realistic_scenario_cpp/dispatcher.s"
+	@echo "... local/examples/realistic_scenario_cpp/worker.o"
+	@echo "... local/examples/realistic_scenario_cpp/worker.i"
+	@echo "... local/examples/realistic_scenario_cpp/worker.s"
+	@echo "... local/tests/cpp_smoke.o"
+	@echo "... local/tests/cpp_smoke.i"
+	@echo "... local/tests/cpp_smoke.s"
 .PHONY : help
 
 
