@@ -1,12 +1,8 @@
-# 生产交付：客户端接口（Python）
+# 生产交付：客户端接口（Python + C++ 入口）
 
-本仓库的服务器协议是：**v2 header（40B 小端）+ body**。上行由 **`Header.msg_type`** 区分 **login(1) / heartbeat(2) / control(3) / data(4)**，body 为 **msgpack map**。下行主要有三类：
+**线协议与 200/201/202 细节以 `docs/protocol.md` 为准。**
 
-- **200 DELIVER**：body 为 **msgpack**，含 `payload`（bin）、`src_conn_id`、`dst_conn_id`、`src_username`、`dst_username`（并约定下行 header 的 src/dst user_id 置 0）
-- **201 SERVER_REPLY**：body 为 msgpack（ACK/错误/CONTROL 返回等）
-- **202 KICK**：body 为 msgpack（`op:"KICK"`、`reason`），表示服务端将断开本连接
-
-若生产系统需要传输结构体/对象：将对象**序列化为 bytes**（msgpack/protobuf 等），作为 **DATA** 的 `payload` 发送；对端收到 **200** 后从 map 中取出 `payload` 再反序列化。
+对业务 payload：将结构体/对象**序列化为 bytes**（msgpack、protobuf 等），作为 **DATA** 的 `payload` 发送；对端在 **200 DELIVER** 中取出 `payload` 再反序列化。服务端对 payload **不透明**。
 
 ## `RelayClient`（最小可用生产接口）
 
@@ -74,11 +70,8 @@ print("ack:", reply)
 
 底层组帧/收包与常量见 **`tools/relay_proto.py`**（与 C++ `pack_wire` / 头布局一致）。
 
-## C++ SDK（交付用）
+## C++（交付用）
 
-如果你的生产环境以 C++ 为主，仓库提供一个“把中继当黑盒”的 C++ SDK：
-
-- 头文件：`include/fwd/relay_client.hpp`
-- 实现：`src/relay_client.cpp`
-
-对应 CMake target：`asio_forwarder_sdk`，示例程序见 `examples/realistic_scenario_cpp/`。
+- **主用（推荐）**：`include/fwd/asio_forwarder_client.hpp` + `src/asio_forwarder_client.cpp` —— 连接配置、`open` / `sign_on` / `heartbeat` / `send` / `recv_deliver`、管理员 `control_*`；内部用 `RelayClient` 实现线协议，业务一般只包含本头。
+- **线协议层**（同库，高级用途）：`include/fwd/relay_client.hpp` + `src/relay_client.cpp`。
+- CMake target：`asio_forwarder_sdk`；多进程示例见 `examples/realistic_scenario_cpp/`，自测见 `examples/asio_forwarder_client_smoke/`。

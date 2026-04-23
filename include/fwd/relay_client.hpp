@@ -8,6 +8,7 @@
 // 约定：当前实现下行 Header.src_user_id/dst_user_id 均为 0，身份信息在 DELIVER body 信封中。
 //
 // 目标：给业务方提供一个简单 C++ API：connect/login/send/control/recv。
+// 对外主用高层 API 见 fwd/asio_forwarder_client.hpp（本类为其实现依赖）。
 
 #include <cstdint>
 #include <functional>

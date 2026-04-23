@@ -42,8 +42,13 @@
 | 值 | 常量 | 含义 | Body |
 |---:|---|---|---|
 | 200 | `kMsgDeliver` | 投递对端数据 | **msgpack map**：`payload`（bin）、`src_conn_id`（u64）、`dst_conn_id`（u64）、`src_username`（str）、`dst_username`（str）。`payload` 为发送方在 **DATA** 里给出的原始字节，服务器不解释其业务语义 |
-| 201 | `kMsgServerReply` | 应答或错误 | **msgpack map**：`ok`、`error`、`op` 等 |
+| 201 | `kMsgServerReply` | 应答或错误 | **msgpack map**：见下「201 SERVER_REPLY」 |
 | 202 | `kMsgKick` | 服务端即将断开本连接 | **msgpack map**：`op:"KICK"`、`reason`（字符串，说明断开原因） |
+
+### 201 `SERVER_REPLY`
+
+- **成功或常规结果**：一般含 `ok:true`，并带 `op`（如 `LOGIN` / `HEARTBEAT` / `DATA` / `CONTROL` 等，随场景而定）及业务字段；回显的 `seq` 与本次上行帧一致。
+- **仅表示拒绝/错误**（`handle_client_frame` 内 `send_err_reply`）：`ok:false` + `error`（人可读说明）。这类应答**不保证**带 `op` 字段。客户端/解析器在匹配某次请求时，应以「同 `seq` 且 `ok:false`」作为错误主路径，**不要**仅依赖 `op` 与请求类型一致来识别失败。
 
 ## 登录 / 注册（`msg_type = 1`）
 

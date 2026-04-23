@@ -83,6 +83,13 @@ export PYTHONPATH="$ROOT/tools"
 python3 "$ROOT/tools/relay_e2e_runner.py" 127.0.0.1 "$E2E_CLIENT"
 python3 "$ROOT/tools/relay_test_suite.py" 127.0.0.1 "$E2E_CLIENT"
 
+if [[ -x "$ROOT/build/asio_forwarder_client_smoke" ]]; then
+  echo "---- asio_forwarder_client_smoke (C++ 上层 client) ----"
+  "$ROOT/build/asio_forwarder_client_smoke" --connect 127.0.0.1 "$E2E_CLIENT" "$E2E_ADMIN"
+else
+  echo "---- skip asio_forwarder_client_smoke (rebuild with ./scripts/build.sh) ----"
+fi
+
 echo "---- admin /api/health ----"
 python3 -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:'+str($E2E_ADMIN)+'/api/health'); assert b'ok' in r.read().lower()"
 

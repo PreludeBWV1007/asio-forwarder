@@ -30,7 +30,10 @@
 
 ```bash
 ./scripts/build.sh
+cd build && ctest --output-on-failure
 ```
+
+`ctest`、**与 smoke 的分工**、**最近一次回归记录（日期与耗时）**见 **`docs/testing.md`**（`relay_cli` / e2e 亦在同文）。
 
 ### 运行（开发配置）
 
@@ -43,71 +46,29 @@
 - **client**：`0.0.0.0:19000`
 - **admin**：`127.0.0.1:19003`
 
-## 测试脚本与使用方式
+## 测试、Web 演示、SDK 与示例
 
-完整测试与工具说明见 **`docs/testing.md`**。常用入口：
+- **自动测试、relay_cli、WebUI、`flood` 样例数**：**`docs/testing.md`**
+- **生产交付物清单**（服务 / C++ SDK / 示例 / 可选 Web）：**`docs/delivery.md`**
+- **C++ 对外 API 摘要**：**`docs/client_api.md`**（Python 见同文）
 
-```bash
-pip install -r tools/requirements-relay.txt
-export PYTHONPATH=tools
+## 接口（SDK）与真实场景示例
 
-# 交互式控制台（推荐：一个终端管理多连接、发包、压测、拉取 admin）
-python3 tools/relay_cli.py --host 127.0.0.1 --port 19000 --admin-port 19003
-
-# 或一键拉起 build/asio_forwarder（随机端口）后进入控制台
-python3 tools/relay_cli.py --spawn-server
-```
-
-自动化回归：
-
-```bash
-cd build && ctest --output-on-failure
-# 或
-./scripts/test_e2e.sh
-```
-
-## 最终呈现：Web 前端交互界面（本地）
-
-仓库提供一个“浏览器界面”用于展示完整功能（注册/登录、DATA、CONTROL、KICK）。它通过一个轻量桥接服务把浏览器操作转换为 TCP 协议帧（中继仍是黑盒）。
-
-```bash
-pip install -r tools/requirements-relay.txt -r tools/requirements-webui.txt
-export PYTHONPATH=tools
-python3 tools/webui_server.py --relay-host 127.0.0.1 --relay-port 19000
-```
-
-然后打开 `http://127.0.0.1:8080`。
-
-说明：WebUI 支持发送普通 UTF-8 文本，也支持按页面选择并录入若干枚举结构体（如 `Task/Notice/StockTick`），由桥接服务打包为 msgpack `{"kind","type","data"}` payload 后发送，用于验证“结构体/多态消息”端到端传输。
-
-## 最终交付：接口（SDK）与真实场景示例
-
-- **C++ SDK（接口封装）**：`include/fwd/relay_client.hpp` + `src/relay_client.cpp`（CMake target：`asio_forwarder_sdk`）  
-- **真实场景示例（C++）**：`examples/realistic_scenario_cpp/`（`dispatcher_cpp` / `worker_cpp` / `admin_cpp`，按用户名路由并覆盖功能）  
-- **Python**：仓库中的 Python 主要用于联调/自测/演示；生产交付可不包含 Python
-
-## 某次压测数据（样例）
-
-说明：以下为历史 **`relay_cli.py --spawn-server`** 在旧协议（Body `op` + 旧广播语义）下的一次 loopback 结果，**数值与机器/内核/网络栈/客户端相关**，仅作相对参考；**当前协议已改为 `msg_type` + 按目标用户广播/轮询**，若需对比请在现版本复跑。
-
-| 场景 | payload | count | window | 发送速率（约） | ACK RTT p50/p95/p99 (ms) |
-|------|--------:|------:|-------:|------------------------:|--------------------------:|
-| unicast → 单接收者 | 32 B | 20,000 | 256 | ≈ 7,363 | ≈ 1 / 7 / 44 |
-| unicast | 1,024 B | 10,000 | 128 | ≈ 6,700 | ≈ 2 / 10 / 15 |
-| unicast | 65,536 B | 1,000 | 32 | ≈ 4,478 | ≈ 3 / 6 / 12 |
-| 旧 broadcast（多其他用户各 1 条） | 32 B | 20,000 | 256 | ≈ 3,076 | ≈ 75 / 92 / 101 |
-| 旧 round_robin | 32 B | 20,000 | 256 | ≈ 4,064 | ≈ 66 / 86 / 93 |
+- **C++ 主用 API**：`include/fwd/asio_forwarder_client.hpp` + `src/asio_forwarder_client.cpp`（同属 `asio_forwarder_sdk`；`relay_client` 在库内作为实现层）  
+- **自测程序**：`examples/asio_forwarder_client_smoke/smoke.cpp` → `build/asio_forwarder_client_smoke`（`ctest` 中 `--connect` 连接随机口）
+- **真实场景示例（C++）**：`examples/realistic_scenario_cpp/`（`dispatcher_cpp` / `worker_cpp` / `admin_cpp`，按用户名路由并覆盖功能；与上并列，按需保留）  
+- **Python**：主要用于联调/自测/演示；纯 C++ 交付可不包含
 
 ## 文档导航
 
-- `docs/protocol.md`：协议与字段（v2 header、`msg_type`、200/201/202）
-- `docs/client_api.md`：Python `RelayClient` 说明
-- `docs/delivery.md`：**交付清单（Server/Client/SDK/示例/WebUI）**
-- `docs/architecture.md`：组件与线程/配置注意点
-- `docs/data_flow.md`：读帧 → 路由 → 写出数据流
-- `docs/design.md`：取舍与扩展方向
-- `docs/testing.md`：测试脚本、交互控制台、压测说明
-- `docs/history.md`：**版本更迭/历史变化（与旧版差异）**
+| 主题 | 文档 |
+|------|------|
+| 线协议（header、`msg_type`、200/201/202） | `docs/protocol.md` |
+| 测试、`relay_cli`、**历史压测样例表**、WebUI 启动 | `docs/testing.md` |
+| 交付物清单 | `docs/delivery.md` |
+| 客户端（Python + C++ 入口） | `docs/client_api.md` |
+| 架构 / 数据流 / 设计取舍 | `docs/architecture.md`、`docs/data_flow.md`、`docs/design.md` |
+| 与旧版差异 | `docs/history.md` |
 
 ## 重要实现提醒（与直觉可能不同）
 

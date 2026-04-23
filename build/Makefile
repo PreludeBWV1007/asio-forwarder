@@ -236,6 +236,43 @@ admin_cpp/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/admin_cpp.dir/build.make CMakeFiles/admin_cpp.dir/build
 .PHONY : admin_cpp/fast
 
+#=============================================================================
+# Target rules for targets named asio_forwarder_client_smoke
+
+# Build rule for target.
+asio_forwarder_client_smoke: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 asio_forwarder_client_smoke
+.PHONY : asio_forwarder_client_smoke
+
+# fast build rule for target.
+asio_forwarder_client_smoke/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/build
+.PHONY : asio_forwarder_client_smoke/fast
+
+examples/asio_forwarder_client_smoke/smoke.o: examples/asio_forwarder_client_smoke/smoke.cpp.o
+.PHONY : examples/asio_forwarder_client_smoke/smoke.o
+
+# target to build an object file
+examples/asio_forwarder_client_smoke/smoke.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.o
+.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.o
+
+examples/asio_forwarder_client_smoke/smoke.i: examples/asio_forwarder_client_smoke/smoke.cpp.i
+.PHONY : examples/asio_forwarder_client_smoke/smoke.i
+
+# target to preprocess a source file
+examples/asio_forwarder_client_smoke/smoke.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.i
+.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.i
+
+examples/asio_forwarder_client_smoke/smoke.s: examples/asio_forwarder_client_smoke/smoke.cpp.s
+.PHONY : examples/asio_forwarder_client_smoke/smoke.s
+
+# target to generate assembly for a file
+examples/asio_forwarder_client_smoke/smoke.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_client_smoke.dir/build.make CMakeFiles/asio_forwarder_client_smoke.dir/examples/asio_forwarder_client_smoke/smoke.cpp.s
+.PHONY : examples/asio_forwarder_client_smoke/smoke.cpp.s
+
 examples/realistic_scenario_cpp/admin.o: examples/realistic_scenario_cpp/admin.cpp.o
 .PHONY : examples/realistic_scenario_cpp/admin.o
 
@@ -308,6 +345,30 @@ examples/realistic_scenario_cpp/worker.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/worker_cpp.dir/build.make CMakeFiles/worker_cpp.dir/examples/realistic_scenario_cpp/worker.cpp.s
 .PHONY : examples/realistic_scenario_cpp/worker.cpp.s
 
+src/asio_forwarder_client.o: src/asio_forwarder_client.cpp.o
+.PHONY : src/asio_forwarder_client.o
+
+# target to build an object file
+src/asio_forwarder_client.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.o
+.PHONY : src/asio_forwarder_client.cpp.o
+
+src/asio_forwarder_client.i: src/asio_forwarder_client.cpp.i
+.PHONY : src/asio_forwarder_client.i
+
+# target to preprocess a source file
+src/asio_forwarder_client.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.i
+.PHONY : src/asio_forwarder_client.cpp.i
+
+src/asio_forwarder_client.s: src/asio_forwarder_client.cpp.s
+.PHONY : src/asio_forwarder_client.s
+
+# target to generate assembly for a file
+src/asio_forwarder_client.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder_sdk.dir/build.make CMakeFiles/asio_forwarder_sdk.dir/src/asio_forwarder_client.cpp.s
+.PHONY : src/asio_forwarder_client.cpp.s
+
 src/main.o: src/main.cpp.o
 .PHONY : src/main.o
 
@@ -371,9 +432,13 @@ help:
 	@echo "... test"
 	@echo "... admin_cpp"
 	@echo "... asio_forwarder"
+	@echo "... asio_forwarder_client_smoke"
 	@echo "... asio_forwarder_sdk"
 	@echo "... dispatcher_cpp"
 	@echo "... worker_cpp"
+	@echo "... examples/asio_forwarder_client_smoke/smoke.o"
+	@echo "... examples/asio_forwarder_client_smoke/smoke.i"
+	@echo "... examples/asio_forwarder_client_smoke/smoke.s"
 	@echo "... examples/realistic_scenario_cpp/admin.o"
 	@echo "... examples/realistic_scenario_cpp/admin.i"
 	@echo "... examples/realistic_scenario_cpp/admin.s"
@@ -383,6 +448,9 @@ help:
 	@echo "... examples/realistic_scenario_cpp/worker.o"
 	@echo "... examples/realistic_scenario_cpp/worker.i"
 	@echo "... examples/realistic_scenario_cpp/worker.s"
+	@echo "... src/asio_forwarder_client.o"
+	@echo "... src/asio_forwarder_client.i"
+	@echo "... src/asio_forwarder_client.s"
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"

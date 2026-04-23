@@ -1,6 +1,48 @@
 # 测试与压测说明
 
-本文描述如何运行自动化测试、Python 工具与交互式控制台，并记录一次在本仓库环境中测得的压测数据（**旧协议形态**）。**压测数值随 CPU、内核、是否 loopback、客户端实现语言而变**，仅作相对参考；以你本机复现为准。
+如何跑 **ctest / e2e / 套件 / `relay_cli` / WebUI**；文末为**历史 loopback 压测表**（旧广播语义下的一次跑数，**仅作数量级参考**，以本机复现为准）。
+
+## 测试资产清单（本仓库里「算测试/回归」的源文件）
+
+| # | 路径 | 在自动化里的位置 | 主要验证什么（被测侧） |
+|---|------|------------------|------------------------|
+| 1 | `scripts/test_e2e.sh` | `ctest` 唯一用例 `e2e_forwarder` 的入口；亦可直接执行 | 临时端口、起服、串起下表 2–4、最后 `GET /api/health` |
+| 2 | `tools/relay_e2e_runner.py` | 由 `test_e2e.sh` 调用 | **服务端** `src/main.cpp` 路由：注册/登录、HEARTBEAT、DATA 单播、**200/201** 与 DELIVER 元数据（**不经 C++ SDK**） |
+| 3 | `tools/relay_test_suite.py` | 由 `test_e2e.sh` 调用 | 多连接、单播/按用户广播/轮询、CONTROL、KICK、异常包等更宽**协议面**（同样针对服务端 + `relay_proto` 组帧） |
+| 4 | `examples/asio_forwarder_client_smoke/smoke.cpp` | 若已编译出 `build/asio_forwarder_client_smoke`，`test_e2e.sh` 会 **`--connect` 到本次临时中继** 再跑**一轮**；也可单独跑（见下） | **C++ SDK**：`include/fwd/asio_forwarder_client.hpp` + `src/asio_forwarder_client.cpp`（及底层 `relay_client`）；探针/吞吐段不重复覆盖 Python 脚本的逐条用例，而是偏集成与性能形状 |
+| — | `tools/relay_proto.py` | 被 2、3 import | **不单独计为一条「测试用例」**：协议常量/组帧/收包，与 `include/fwd/protocol.hpp` 等对齐，供黑盒脚本使用 |
+
+`CMake` 里**没有**为 smoke 再写一条 `add_test`；但 **`./scripts/test_e2e.sh` 已内嵌**对 `asio_forwarder_client_smoke` 的调用（有则跑、无则跳过）。若要单独拉长参数（如 `--stress-n` / 默认稳定性轮次），或进程内**自带起服**跑全量，需**手敲**可执行文件，见下表「C++ smoke 单独跑」。
+
+## 测试分层：不是只有 smoke，也不只有 Python
+
+| 层级 | 作用 | 典型入口 |
+|------|------|----------|
+| **CTest** | `e2e_forwarder` → `test_e2e.sh`：**Python 两段 +（可选）C++ smoke 一段 +** admin health | `cd build && ctest --output-on-failure` |
+| **C++ smoke 单独跑** | 不连 `test_e2e` 的短参数、或**无** build 时补跑 | `build/asio_forwarder_client_smoke`（`--connect` 或默认进程内起服，见 `--help`） |
+| **手工 / 联调** | `relay_cli`、Web 桥、长联调 `run_scenario.py`、多进程示例 | 同下文各节 |
+
+## 回归验证记录（可随发布更新本表）
+
+以下为**同一代码树**在开发机上的一次结果；**不保证**等价于你方 CI/真机，仅说明「本仓库曾这样绿过」。
+
+| 日期 | 步骤 | 结果（摘要） |
+|------|------|----------------|
+| 2026-04-23 | `cd build && ctest --output-on-failure` | `e2e_forwarder` **Passed**，总时间约 **122 s**（含启动中继 + Python e2e + 套件 + health） |
+| 2026-04-23 | `./build/asio_forwarder_client_smoke --stress-n 200 --stability-rounds 5` | 输出 **`smoke: OK`**；`[throughput] n=200` 当次约 **9843 ms**；可靠性探针强断言**通过**（若有 `[probe] 观察` 行，为协议/语义说明，不表示失败） |
+| Web 桥 | — | **无**自动化用例；依赖人工安装依赖、起 `webui_server.py`、浏览器点一点功能。交付清单仍将其列为**联调/演示**组件。 |
+
+## 与自动化测试无直接关系的文件/目录（一般不要当「测完可删的废件」处理）
+
+| 类型 | 路径示例 | 说明 |
+|------|----------|------|
+| 主程序与库 | `src/main.cpp`，`src/relay_client.cpp`，`src/asio_forwarder_client.cpp` | 被 e2e / smoke **验证**，不是「测试多出来的文件」。 |
+| 协议与配置 | `include/fwd/*`，`configs/*.json` | 运行与联调需要。 |
+| 联调工具（**非 ctest 步骤**） | `tools/relay_cli.py`，`tools/webui_server.py` + `tools/webui_static/`，`tools/run_scenario.py` | 人工或半自动；删除会丢掉交付/文档里常提到的演示路径。 |
+| 交付示例（**非 ctest 步骤**） | `examples/realistic_scenario_cpp/*`，`examples/realistic_scenario/*`（旧版 Python 三进程） | 展示多进程/多态 payload；`smoke.cpp` 仅 **include** 了 `realistic_scenario_cpp/messages.hpp`，**不要**删该头除非改 smoke 依赖。 |
+| 文档 | `docs/*.md` | 含本文 `testing.md`。 |
+
+**是否可删？** 只有在你明确**不再需要**某条联调故事（例如只保留 C++ 示例、不要 Python 三进程 `examples/realistic_scenario/`）时，再删对应树；**不要**为「给测试让路」而删主程序、协议或 `relay_proto.py`。删除前建议全仓库 `grep` 引用并跑一遍 `ctest` + 手跑 smoke。
 
 ## 依赖
 

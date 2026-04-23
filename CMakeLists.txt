@@ -27,6 +27,7 @@ target_compile_definitions(asio_forwarder PRIVATE MSGPACK_NO_BOOST)
 
 add_library(asio_forwarder_sdk
   src/relay_client.cpp
+  src/asio_forwarder_client.cpp
 )
 target_include_directories(asio_forwarder_sdk PUBLIC include)
 target_compile_options(asio_forwarder_sdk PRIVATE -Wall -Wextra -Wpedantic)
@@ -39,7 +40,7 @@ add_test(
   COMMAND "${CMAKE_SOURCE_DIR}/scripts/test_e2e.sh"
   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
-set_tests_properties(e2e_forwarder PROPERTIES TIMEOUT 120)
+set_tests_properties(e2e_forwarder PROPERTIES TIMEOUT 300)
 
 add_executable(dispatcher_cpp examples/realistic_scenario_cpp/dispatcher.cpp)
 target_link_libraries(dispatcher_cpp PRIVATE asio_forwarder_sdk)
@@ -52,3 +53,8 @@ target_include_directories(worker_cpp PRIVATE include)
 add_executable(admin_cpp examples/realistic_scenario_cpp/admin.cpp)
 target_link_libraries(admin_cpp PRIVATE asio_forwarder_sdk)
 target_include_directories(admin_cpp PRIVATE include)
+
+# 黑盒一体化：单文件内含服务端自启动 + 客户端基础/压力/稳定性（可与 ctest 联跑 --connect）
+add_executable(asio_forwarder_client_smoke examples/asio_forwarder_client_smoke/smoke.cpp)
+target_link_libraries(asio_forwarder_client_smoke PRIVATE asio_forwarder_sdk)
+target_include_directories(asio_forwarder_client_smoke PRIVATE include examples/realistic_scenario_cpp)

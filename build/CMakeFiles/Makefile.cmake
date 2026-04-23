@@ -66,4 +66,5 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/dispatcher_cpp.dir/DependInfo.cmake"
   "CMakeFiles/worker_cpp.dir/DependInfo.cmake"
   "CMakeFiles/admin_cpp.dir/DependInfo.cmake"
+  "CMakeFiles/asio_forwarder_client_smoke.dir/DependInfo.cmake"
   )

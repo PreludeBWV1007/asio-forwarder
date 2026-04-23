@@ -1,8 +1,12 @@
 # 交付清单（服务器端 + 客户端端）
 
-本文用于“最终交付”时明确：**服务器端需要交付什么**、**客户端侧（业务方）需要拿到什么**、以及推荐的目录/运行方式。
+**构建、自测、WebUI 启动、历史压测表**：见 `README.md` 与 `docs/testing.md`（本文不重复「怎么跑起来」的指令）。
 
-> 约定：`asio_forwarder` 作为黑盒中间件运行在服务器；业务方在自己的机器/进程中使用 C++ SDK 接入；本仓库也提供一个 Web 前端（Python 桥接）用于本地交互演示。
+**自动化状态**：`ctest`（Python e2e+套件）与 **C++ smoke** 的分工、以及可选的**回归记录表**，见 **`docs/testing.md` 的「测试分层」「回归验证记录」**；Web 桥**无**机器用例，仍属人工验收范围。
+
+目的：列清 **服务器** / **C++ 集成方** 各自应拿哪些产物；**Python 工具** 为联调/演示，可选。
+
+> `asio_forwarder` 为黑盒中间件；业务进程用 C++ SDK 接入；Web 页面经 Python 桥接连 TCP 中继，仅作本地演示。
 
 ## 服务器端交付（Server）
 
@@ -27,16 +31,11 @@
 
 ### 必交付：C++ SDK
 
-- **头文件**：`include/fwd/relay_client.hpp`
-- **实现**：`src/relay_client.cpp`
-- **CMake target**：`asio_forwarder_sdk`（静态库 `libasio_forwarder_sdk.a`）
+- **对外主用 API（业务集成方）**：`include/fwd/asio_forwarder_client.hpp` + `src/asio_forwarder_client.cpp`（ConnectionConfig、Client：open / sign_on / heartbeat / send / recv_deliver、管理员 CONTROL 等；与 Web 桥用法一致：连上 → 身份 → 发收）
+- **线协议层（随库提供，一般不必直接 #include）**：`include/fwd/relay_client.hpp` + `src/relay_client.cpp`（由 asio_forwarder_client 在内部使用）
+- **CMake target**：`asio_forwarder_sdk`（静态库 `libasio_forwarder_sdk.a`，包含上述所有 .cpp）
 
-业务方接入时只需要依赖 SDK（不需要理解服务端实现），典型流程：
-- `connect(host, port)`
-- `login(username, password, peer_role, register)`
-- `send_unicast/broadcast/round_robin(dst_username, payload, ...)`
-- （可选）`send_*_typed(dst_username, type, obj, ...)`：把业务 payload 封装为 msgpack `{"type": <string>, "data": <object>}`（SDK 接收端会 best-effort 解包；详见 `docs/protocol.md`）
-- `recv()` 收 `Deliver/ServerReply/Kick`
+**推荐**走 `asio_forwarder_client`：`open(ConnectionConfig)` → `sign_on(..., register_new)` → `send(SendMode, ...)` / `send_typed` / `send_poly` → `recv_deliver()`，管理员另用 `control_list_users` / `control_kick_user`。需帧级控制时再使用 `Client::raw()` 取 `RelayClient`。
 
 ### 必交付：C++ 真实业务模拟（示例工程）
 
@@ -57,27 +56,11 @@
 
 运行步骤见：`examples/realistic_scenario_cpp/README.md`
 
-## 本地交互演示（可选交付 / 推荐研发保留）
+## 本地交互演示（可选 / 建议仅研发保留）
 
-### Web 前端交互界面（唯一前端）
-
-用于本地测试/演示全部功能（注册/登录、DATA、CONTROL、KICK）：
-
-- **桥接服务**：`tools/webui_server.py`
-- **前端页面**：`tools/webui_static/index.html`
-- **依赖**：`tools/requirements-webui.txt`、`tools/requirements-relay.txt`
-
-启动：
-
-```bash
-pip install -r tools/requirements-relay.txt -r tools/requirements-webui.txt
-export PYTHONPATH=tools
-python3 tools/webui_server.py --relay-host 127.0.0.1 --relay-port 19000
-```
-
-打开：`http://127.0.0.1:8080`
-
-> 说明：WebUI 是“演示/联调工具”，不影响 C++ 交付主链路；生产交付可以不包含 Python。WebUI 支持发送 UTF-8 文本，也支持按页面枚举结构体字段组装并发送 `{"kind","type","data"}` 形式的 msgpack payload（用于验证结构体传输）。
+- 组件：`tools/webui_server.py` + `tools/webui_static/index.html`；依赖见 `tools/requirements-*.txt`。
+- **安装与启动命令**见 `docs/testing.md` 的「Web 前端」一节；默认 `http://127.0.0.1:8080`。
+- 生产交付**可不包含** Python；Web 仅作联调与多态 payload 演示。
 
 ## 交付时建议打包的最小集合（推荐）
 
