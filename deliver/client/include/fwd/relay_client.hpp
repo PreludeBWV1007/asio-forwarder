@@ -1,11 +1,11 @@
 #pragma once
 
 // C++ 客户端 SDK（把中继当黑盒）。
-// - v2 fixed header (40B little-endian) + msgpack body
+// - v3 fixed header (24B little-endian) + msgpack body
 // - 上行 msg_type: login(1) / heartbeat(2) / control(3) / data(4)
 // - 下行: deliver(200) / server_reply(201) / kick(202)
 //
-// 约定：当前实现下行 Header.src_user_id/dst_user_id 均为 0，身份信息在 DELIVER body 信封中。
+// 身份信息在 DELIVER body 的 src_username / dst_username 中。
 //
 // 目标：给业务方提供一个简单 C++ API：connect/login/send/control/recv。
 // 对外主用高层 API 见 fwd/asio_forwarder_client.hpp（本类为其实现依赖）。
@@ -54,9 +54,10 @@ struct Deliver {
 struct ServerReply {
   std::uint32_t seq{0};
   bool ok{false};
-  std::string op;     // LOGIN / HEARTBEAT / DATA / CONTROL (best-effort)
-  std::string error;  // when ok=false
-  std::string raw;    // debug string (best-effort)
+  int code{0};
+  std::string op;      // LOGIN / HEARTBEAT / DATA / CONTROL (best-effort)
+  std::string message; // ok=false 时服务端 message；或旧字段 error
+  std::string raw;     // debug
 };
 
 struct Kick {
@@ -77,24 +78,16 @@ class RelayClient {
   void connect(const std::string& host, std::uint16_t port);
   void close();
 
-  // login/register; peer_role: "user" | "admin"
-  std::uint32_t login(const std::string& username, const std::string& password, const std::string& peer_role, bool register_user);
+  // 登录；recv_mode: "broadcast" | "round_robin"（由服务端按多连接策略转发 DATA）
+  std::uint32_t login(const std::string& username, const std::string& password, const std::string& peer_role,
+                        const std::string& recv_mode);
   std::uint32_t heartbeat();
 
-  // DATA: mode unicast/broadcast/round_robin by dst_username
-  std::uint32_t send_unicast(const std::string& dst_username, const std::string& payload, std::uint64_t dst_conn_id = 0);
-  std::uint32_t send_broadcast(const std::string& dst_username, const std::string& payload);
-  std::uint32_t send_round_robin(const std::string& dst_username, const std::string& payload, std::uint64_t interval_ms = 0);
+  // DATA：仅 dst_username + payload（bin），路由由对端用户登录时选择的 recv_mode 决定
+  std::uint32_t send_data(const std::string& dst_username, const std::string& payload);
 
-  // DATA with typed payload: payload bytes are msgpack map {"type":<str>,"data":<obj>}
   template <class T>
-  std::uint32_t send_unicast_typed(const std::string& dst_username, const std::string& type, const T& obj,
-                                  std::uint64_t dst_conn_id = 0);
-  template <class T>
-  std::uint32_t send_broadcast_typed(const std::string& dst_username, const std::string& type, const T& obj);
-  template <class T>
-  std::uint32_t send_round_robin_typed(const std::string& dst_username, const std::string& type, const T& obj,
-                                      std::uint64_t interval_ms = 0);
+  std::uint32_t send_data_typed(const std::string& dst_username, const std::string& type, const T& obj);
 
   // CONTROL (admin only)
   std::uint32_t control_list_users();
@@ -122,18 +115,8 @@ std::string pack_typed_payload(const std::string& type, const T& v) {
 }  // namespace detail
 
 template <class T>
-std::uint32_t RelayClient::send_unicast_typed(const std::string& dst_username, const std::string& type, const T& obj,
-                                              std::uint64_t dst_conn_id) {
-  return send_unicast(dst_username, detail::pack_typed_payload(type, obj), dst_conn_id);
-}
-template <class T>
-std::uint32_t RelayClient::send_broadcast_typed(const std::string& dst_username, const std::string& type, const T& obj) {
-  return send_broadcast(dst_username, detail::pack_typed_payload(type, obj));
-}
-template <class T>
-std::uint32_t RelayClient::send_round_robin_typed(const std::string& dst_username, const std::string& type, const T& obj,
-                                                  std::uint64_t interval_ms) {
-  return send_round_robin(dst_username, detail::pack_typed_payload(type, obj), interval_ms);
+std::uint32_t RelayClient::send_data_typed(const std::string& dst_username, const std::string& type, const T& obj) {
+  return send_data(dst_username, detail::pack_typed_payload(type, obj));
 }
 
 template <class T>

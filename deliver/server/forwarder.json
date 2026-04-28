@@ -1,5 +1,5 @@
 {
-  "_comment": "对等中继：client.listen=唯一业务 TCP 端口（所有客户端连此口）；admin=只读 HTTP；session.*=每用户连接数/心跳/广播上限/轮流默认间隔；limits/flow/timeouts/metrics 同前。",
+  "_comment": "对等中继 v3 + MySQL。password 为空时本机 root 常会 Access denied；开发可 export FORWARDER_MYSQL_PASSWORD 后 ./scripts/run_dev.sh，详见根 README.md。",
   "client": {
     "listen": { "host": "0.0.0.0", "port": 19000, "backlog": 1024 }
   },
@@ -17,7 +17,13 @@
   "session": {
     "max_connections_per_user": 8,
     "heartbeat_timeout_ms": 30000,
-    "round_robin_default_interval_ms": 50,
     "broadcast_max_recipients": 10000
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "e2etest",
+    "database": "forwarder_e2e"
   }
 }

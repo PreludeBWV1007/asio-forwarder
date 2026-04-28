@@ -18,4 +18,13 @@ inline constexpr std::uint32_t kMsgDeliver = 200;    // Body 为 msgpack：{payl
 inline constexpr std::uint32_t kMsgServerReply = 201;  // Body 为 msgpack：ACK/错误/CONTROL 回复
 inline constexpr std::uint32_t kMsgKick = 202;  // Body 为 msgpack：{op:"KICK", reason}
 
+// 201 / 错误 应答中 code（可选；与 message 成对使用）
+namespace errc {
+inline constexpr int kIpNotAllowed = 1001;
+inline constexpr int kAuthFailed = 1002;
+inline constexpr int kInvalidLoginBody = 1003;
+inline constexpr int kRoleMismatch = 1004;
+inline constexpr int kProtocol = 1005;
+}  // namespace errc
+
 }  // namespace fwd::relay

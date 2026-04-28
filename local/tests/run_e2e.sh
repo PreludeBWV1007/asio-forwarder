@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 黑盒一体化：临时端口起 asio_forwarder → e2e_minimal → e2e_suite →（可选）forwarder_cpp_smoke → admin /api/health
+# 黑盒一体化：临时端口起 asio_forwarder → e2e_forwarder.py →（可选）first_use_client → admin /api/health
 # 本脚本位于 local/tests/，依赖 deliver/ 的已构建 asio_forwarder 与头文件；Python 依赖 local/tools（PYTHONPATH）
 set -euo pipefail
 
@@ -18,6 +18,7 @@ python3 -c "import msgpack" 2>/dev/null || {
 
 TMP_CFG=$(mktemp)
 FWD_PID=""
+E2E_MYSQL_PASSWORD="${E2E_MYSQL_PASSWORD:-e2etest}"
 
 cleanup() {
   if [[ -n "$FWD_PID" ]]; then
@@ -29,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 read -r E2E_CLIENT E2E_ADMIN < <(python3 -c "
-import json, socket, sys
+import json, os, socket, sys
 
 def pick():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -55,10 +56,32 @@ c['client']['listen']['port'] = cli
 c['admin']['listen']['host'] = '127.0.0.1'
 c['admin']['listen']['port'] = adm
 c['timeouts']['idle_ms'] = 120000
+if 'mysql' not in c:
+    raise SystemExit('forwarder.json must contain mysql section')
+c['mysql']['host'] = '127.0.0.1'
+c['mysql']['port'] = 3306
+c['mysql']['user'] = 'root'
+c['mysql']['password'] = os.environ.get('E2E_MYSQL_PASSWORD', 'e2etest')
+c['mysql']['database'] = 'forwarder_e2e'
 with open(sys.argv[2], 'w', encoding='utf-8') as f:
     json.dump(c, f, indent=2)
 print(cli, adm)
 " "$ROOT/deliver/server/forwarder.json" "$TMP_CFG")
+
+if command -v mysql >/dev/null 2>&1; then
+  export MYSQL_PWD="${E2E_MYSQL_PASSWORD}"
+  if mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp -e "SELECT 1" >/dev/null 2>&1; then
+    mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp -e "CREATE DATABASE IF NOT EXISTS forwarder_e2e"
+    mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp forwarder_e2e < "$ROOT/deliver/server/schema.sql"
+    mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp forwarder_e2e < "$ROOT/local/tests/seed_e2e.sql"
+  else
+    echo "e2e: MySQL not reachable at 127.0.0.1:3306 (set root password E2E_MYSQL_PASSWORD=$E2E_MYSQL_PASSWORD)" >&2
+    exit 1
+  fi
+else
+  echo "e2e: mysql client not in PATH" >&2
+  exit 1
+fi
 
 "$ROOT/build/asio_forwarder" "$TMP_CFG" &
 FWD_PID=$!
@@ -81,14 +104,13 @@ wait_tcp 127.0.0.1 "$E2E_ADMIN"
 
 echo "---- e2e: client=$E2E_CLIENT admin=$E2E_ADMIN ----"
 export PYTHONPATH="$ROOT/local/tools"
-python3 "$ROOT/local/tests/e2e_minimal.py" 127.0.0.1 "$E2E_CLIENT"
-python3 "$ROOT/local/tests/e2e_suite.py" 127.0.0.1 "$E2E_CLIENT"
+python3 "$ROOT/local/tests/e2e_forwarder.py" 127.0.0.1 "$E2E_CLIENT"
 
-if [[ -x "$ROOT/build/forwarder_cpp_smoke" ]]; then
-  echo "---- forwarder_cpp_smoke (C++ SDK) ----"
-  "$ROOT/build/forwarder_cpp_smoke" --connect 127.0.0.1 "$E2E_CLIENT" "$E2E_ADMIN"
+if [[ -x "$ROOT/build/first_use_client" ]]; then
+  echo "---- first_use_client (C++ SDK 入门闭环) ----"
+  "$ROOT/build/first_use_client" 127.0.0.1 "$E2E_CLIENT"
 else
-  echo "---- skip forwarder_cpp_smoke (rebuild with ./scripts/build.sh) ----"
+  echo "---- skip first_use_client (rebuild with ./scripts/build.sh) ----"
 fi
 
 echo "---- admin /api/health ----"

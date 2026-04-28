@@ -41,6 +41,15 @@ struct Config {
     int interval_ms = 5000;
   };
 
+  // MySQL：用户表 + 全局 IP 白名单；见 deliver/server/schema.sql
+  struct Mysql {
+    std::string host = "127.0.0.1";
+    std::uint16_t port = 3306;
+    std::string user;
+    std::string password;
+    std::string database;
+  };
+
   Listen client_listen{.port = 9000};
   Admin admin{};
   Timeouts timeouts{};
@@ -48,6 +57,7 @@ struct Config {
   FlowControl flow{};
   Metrics metrics{};
   SessionPolicy session{};
+  Mysql mysql{};
 
   int io_threads = 2;
   int biz_threads = 2;

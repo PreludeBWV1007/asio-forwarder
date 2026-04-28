@@ -20,17 +20,26 @@ set(MSGPACK_CXX20 ON CACHE INTERNAL "")
 set(MSGPACK_BUILD_DOCS OFF CACHE INTERNAL "")
 FetchContent_MakeAvailable(msgpack_c)
 
+find_path(MYSQL_INCLUDE_DIR NAMES mysql/mysql.h PATHS /usr/include/mysql /usr/include/mariadb)
+find_library(MYSQL_LIBRARY NAMES mysqlclient mariadb PATHS /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib)
+if (NOT MYSQL_INCLUDE_DIR OR NOT MYSQL_LIBRARY)
+  message(FATAL_ERROR "MySQL client dev required: install libmysqlclient-dev or mariadb-connector-c-devel (mysql.h + libmysqlclient)")
+endif()
+
 add_executable(asio_forwarder
   "${DELIVER_ROOT}/server/src/main.cpp"
 )
-target_include_directories(asio_forwarder PRIVATE "${DELIVER_ROOT}/client/include")
+target_include_directories(asio_forwarder PRIVATE
+  "${DELIVER_ROOT}/client/include"
+  "${DELIVER_ROOT}/server/include"
+)
 target_compile_options(asio_forwarder PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(asio_forwarder PRIVATE pthread boost_system msgpack-cxx)
+target_link_libraries(asio_forwarder PRIVATE pthread boost_system msgpack-cxx "${MYSQL_LIBRARY}")
 target_compile_definitions(asio_forwarder PRIVATE MSGPACK_NO_BOOST)
+target_include_directories(asio_forwarder SYSTEM PRIVATE "${MYSQL_INCLUDE_DIR}")
 
 add_library(asio_forwarder_sdk
-  "${DELIVER_ROOT}/client/src/relay_client.cpp"
-  "${DELIVER_ROOT}/client/src/asio_forwarder_client.cpp"
+  "${DELIVER_ROOT}/client/src/forwarder_sdk.cpp"
 )
 target_include_directories(asio_forwarder_sdk PUBLIC "${DELIVER_ROOT}/client/include")
 target_compile_options(asio_forwarder_sdk PRIVATE -Wall -Wextra -Wpedantic)
@@ -45,21 +54,10 @@ add_test(
 )
 set_tests_properties(e2e_forwarder PROPERTIES TIMEOUT 300)
 
-add_executable(dispatcher_cpp "${LOCAL_ROOT}/examples/realistic_scenario_cpp/dispatcher.cpp")
-target_link_libraries(dispatcher_cpp PRIVATE asio_forwarder_sdk)
-target_include_directories(dispatcher_cpp PRIVATE "${DELIVER_ROOT}/client/include")
+add_executable(forwarder_perf "${LOCAL_ROOT}/tests/perf_basic.cpp")
+target_link_libraries(forwarder_perf PRIVATE asio_forwarder_sdk)
+target_include_directories(forwarder_perf PRIVATE "${DELIVER_ROOT}/client/include")
 
-add_executable(worker_cpp "${LOCAL_ROOT}/examples/realistic_scenario_cpp/worker.cpp")
-target_link_libraries(worker_cpp PRIVATE asio_forwarder_sdk)
-target_include_directories(worker_cpp PRIVATE "${DELIVER_ROOT}/client/include")
-
-add_executable(admin_cpp "${LOCAL_ROOT}/examples/realistic_scenario_cpp/admin.cpp")
-target_link_libraries(admin_cpp PRIVATE asio_forwarder_sdk)
-target_include_directories(admin_cpp PRIVATE "${DELIVER_ROOT}/client/include")
-
-add_executable(forwarder_cpp_smoke "${LOCAL_ROOT}/tests/cpp_smoke.cpp")
-target_link_libraries(forwarder_cpp_smoke PRIVATE asio_forwarder_sdk)
-target_include_directories(forwarder_cpp_smoke PRIVATE
-  "${DELIVER_ROOT}/client/include"
-  "${LOCAL_ROOT}/examples/realistic_scenario_cpp"
-)
+add_executable(first_use_client "${LOCAL_ROOT}/examples/first_use/first_use_client.cpp")
+target_link_libraries(first_use_client PRIVATE asio_forwarder_sdk)
+target_include_directories(first_use_client PRIVATE "${DELIVER_ROOT}/client/include")

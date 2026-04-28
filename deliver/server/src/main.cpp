@@ -1,5 +1,5 @@
-// 对等客户端中继：单 TCP 接入端口 + v2 帧头 msg_type（login/heartbeat/control/data）+ Msgpack Body
-// + admin HTTP。用户↔多连接映射、账户注册/登录、按用户连接转发。
+// 对等客户端中继：单 TCP 接入端口 + v3 帧头 msg_type（login/heartbeat/control/data）+ Msgpack Body
+// + admin HTTP + MySQL 鉴权。用户↔多连接、按接收策略转发 DATA。
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -23,18 +23,22 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include <mysql/mysql.h>
+
+#include <algorithm>
+#include <cstring>
+
 #include "fwd/config.hpp"
 #include "fwd/log.hpp"
 #include "fwd/protocol.hpp"
 #include "fwd/relay_constants.hpp"
-#include "fwd/sha256.hpp"
+#include "mysql_store.hpp"
 
 using boost::asio::awaitable;
 using boost::asio::co_spawn;
@@ -49,9 +53,8 @@ namespace fwd {
 std::string proto::Header::to_string() const {
   return "magic=" + std::to_string(magic) + " ver=" + std::to_string(version) +
          " hlen=" + std::to_string(header_len) + " blen=" + std::to_string(body_len) +
-         " type=" + std::to_string(msg_type) + " flags=" + std::to_string(flags) +
-         " seq=" + std::to_string(seq) + " src_user=" + std::to_string(src_user_id) +
-         " dst_user=" + std::to_string(dst_user_id);
+         " type=" + std::to_string(msg_type) + " seq=" + std::to_string(seq) +
+         " r0=" + std::to_string(reserved0);
 }
 
 static std::uint16_t as_u16(int v, const char* name) {
@@ -98,10 +101,16 @@ Config load_config_or_throw(const std::string& path) {
 
   cfg.session.max_connections_per_user = pt.get<int>("session.max_connections_per_user", cfg.session.max_connections_per_user);
   cfg.session.heartbeat_timeout_ms = pt.get<int>("session.heartbeat_timeout_ms", cfg.session.heartbeat_timeout_ms);
-  cfg.session.round_robin_default_interval_ms =
-      pt.get<int>("session.round_robin_default_interval_ms", cfg.session.round_robin_default_interval_ms);
   cfg.session.broadcast_max_recipients =
       pt.get<int>("session.broadcast_max_recipients", cfg.session.broadcast_max_recipients);
+
+  if (!pt.get_child_optional("mysql")) throw std::runtime_error("config must contain mysql { host, port, user, password, database }");
+  cfg.mysql.host = pt.get<std::string>("mysql.host", cfg.mysql.host);
+  cfg.mysql.port = as_u16(pt.get<int>("mysql.port", cfg.mysql.port), "mysql.port");
+  cfg.mysql.user = pt.get<std::string>("mysql.user", cfg.mysql.user);
+  cfg.mysql.password = pt.get<std::string>("mysql.password", cfg.mysql.password);
+  cfg.mysql.database = pt.get<std::string>("mysql.database", cfg.mysql.database);
+  if (cfg.mysql.user.empty() || cfg.mysql.database.empty()) throw std::runtime_error("mysql.user and mysql.database required");
 
   if (cfg.io_threads < 1 || cfg.io_threads > 64) throw std::runtime_error("invalid threads.io");
   if (cfg.biz_threads < 1 || cfg.biz_threads > 64) throw std::runtime_error("invalid threads.biz");
@@ -121,9 +130,6 @@ Config load_config_or_throw(const std::string& path) {
   }
   if (cfg.session.heartbeat_timeout_ms < 1000 || cfg.session.heartbeat_timeout_ms > 24 * 60 * 60 * 1000) {
     throw std::runtime_error("invalid session.heartbeat_timeout_ms");
-  }
-  if (cfg.session.round_robin_default_interval_ms < 0 || cfg.session.round_robin_default_interval_ms > 60 * 60 * 1000) {
-    throw std::runtime_error("invalid session.round_robin_default_interval_ms");
   }
   if (cfg.session.broadcast_max_recipients < 1 || cfg.session.broadcast_max_recipients > 1'000'000) {
     throw std::runtime_error("invalid session.broadcast_max_recipients");
@@ -244,6 +250,13 @@ class TcpSession : public std::enable_shared_from_this<TcpSession> {
     return ep.address().to_string() + ":" + std::to_string(ep.port());
   }
 
+  std::string client_ip() const {
+    boost::system::error_code ec;
+    auto ep = socket_.remote_endpoint(ec);
+    if (ec) return "";
+    return ep.address().to_string();
+  }
+
   awaitable<void> read_loop(std::shared_ptr<RelayServer> hub);
 
  private:
@@ -316,6 +329,7 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
         heartbeat_timer_(io_) {}
 
   void start() {
+    db_.connect(cfg_.mysql);
     open_listen(client_acceptor_, cfg_.client_listen, "client");
     open_listen(admin_acceptor_, cfg_.admin.listen, "admin");
     accept_clients();
@@ -338,7 +352,8 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
       }
     }
     if (s->logged_in()) {
-      auto du = user_deque_.find(s->user_id());
+      const std::uint64_t uid = s->user_id();
+      auto du = user_deque_.find(uid);
       if (du != user_deque_.end()) {
         auto& dq = du->second;
         for (auto it = dq.begin(); it != dq.end(); ++it) {
@@ -347,7 +362,11 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
             break;
           }
         }
-        if (dq.empty()) user_deque_.erase(du);
+        if (dq.empty()) {
+          user_deque_.erase(du);
+          user_recv_mode_.erase(uid);
+          rr_next_index_.erase(uid);
+        }
       }
     }
   }
@@ -366,57 +385,23 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     pk.pack("reason");
     pk.pack(user_reason);
     std::string body(kb.data(), kb.size());
-    auto wire = pack_wire(relay::kMsgKick, 0, 0, 0, body);
+    auto wire = pack_wire(relay::kMsgKick, 0, body);
     s->kick_notify_and_close(std::move(wire), std::move(log_why));
   }
 
   awaitable<void> handle_client_frame(std::shared_ptr<TcpSession> from, const proto::Header& wire_h, std::string body);
 
  private:
-  struct AccountRecord {
-    std::string username;
-    std::string salt_hex;
-    std::string pass_hash_hex;
-    bool is_admin{false};
-    std::uint64_t user_id{0};
-  };
+  enum class RecvMode { kBroadcast, kRoundRobin };
 
-  static std::string random_hex_salt(std::size_t nbytes) {
-    std::random_device rd;
-    static const char* hx = "0123456789abcdef";
-    std::string out(nbytes * 2, '0');
-    for (std::size_t i = 0; i < nbytes; ++i) {
-      unsigned v = static_cast<unsigned>(rd()) & 0xFF;
-      out[i * 2] = hx[v >> 4];
-      out[i * 2 + 1] = hx[v & 15];
-    }
-    return out;
+  static std::optional<RecvMode> parse_recv_mode_str(const std::string& s) {
+    if (s == "broadcast") return RecvMode::kBroadcast;
+    if (s == "round_robin" || s == "roundrobin") return RecvMode::kRoundRobin;
+    return std::nullopt;
   }
 
-  static bool hex_to_bytes(const std::string& hex, std::string& out) {
-    if (hex.size() % 2) return false;
-    out.clear();
-    out.reserve(hex.size() / 2);
-    auto nib = [](char c) -> int {
-      if (c >= '0' && c <= '9') return c - '0';
-      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-      return -1;
-    };
-    for (std::size_t i = 0; i < hex.size(); i += 2) {
-      int hi = nib(hex[i]);
-      int lo = nib(hex[i + 1]);
-      if (hi < 0 || lo < 0) return false;
-      out.push_back(static_cast<char>((hi << 4) | lo));
-    }
-    return true;
-  }
-
-  static std::string hash_password(const std::string& salt_hex, const std::string& password_utf8) {
-    std::string salt_raw;
-    if (!hex_to_bytes(salt_hex, salt_raw)) return {};
-    const std::string material = salt_raw + password_utf8;
-    return sha256::hash_hex(material.data(), material.size());
+  static const char* recv_mode_cstr(RecvMode m) {
+    return m == RecvMode::kBroadcast ? "broadcast" : "round_robin";
   }
 
   static std::uint64_t now_ms_wall() {
@@ -555,6 +540,19 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
       if (itn != uid_to_username_.end()) uname = itn->second;
       j += "{\"user_id\":" + std::to_string(uid);
       j += ",\"username\":\"" + json_escape(uname) + "\"";
+      bool is_ad = false;
+      for (const auto& s : kv.second) {
+        if (s && s->logged_in()) {
+          is_ad = s->is_admin_account();
+          break;
+        }
+      }
+      j += ",\"is_admin\":" + std::string(is_ad ? "true" : "false");
+      std::string rms = "broadcast";
+      if (const auto itm = user_recv_mode_.find(uid); itm != user_recv_mode_.end()) {
+        rms = recv_mode_cstr(itm->second);
+      }
+      j += ",\"recv_mode\":\"" + json_escape(rms) + "\"";
       j += ",\"connections\":[";
       bool fc = true;
       for (const auto& s : kv.second) {
@@ -562,7 +560,8 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
         if (!fc) j += ",";
         fc = false;
         j += "{\"conn_id\":" + std::to_string(s->conn_id());
-        j += ",\"endpoint\":\"" + json_escape(s->endpoint_str()) + "\"}";
+        j += ",\"endpoint\":\"" + json_escape(s->endpoint_str()) + "\""
+             ",\"pending_bytes\":" + std::to_string(s->pending_bytes()) + "}";
       }
       j += "]}";
     }
@@ -667,6 +666,12 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     });
   }
 
+  static void add_admin_cors(http::response<http::string_body>& res) {
+    res.set(http::field::access_control_allow_origin, "*");
+    res.set(http::field::access_control_allow_methods, "GET, OPTIONS");
+    res.set(http::field::access_control_allow_headers, "Content-Type, Authorization");
+  }
+
   awaitable<void> handle_admin(tcp::socket sock) {
     beast::flat_buffer buffer;
     beast::tcp_stream stream(std::move(sock));
@@ -679,26 +684,39 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     res.version(req.version());
     res.keep_alive(false);
     res.set(http::field::server, "asio-relay-admin");
-    res.set(http::field::content_type, "application/json; charset=utf-8");
     const std::string target = std::string(req.target());
+    if (req.method() == http::verb::options) {
+      res.result(http::status::no_content);
+      add_admin_cors(res);
+      res.prepare_payload();
+      co_await http::async_write(stream, res, boost::asio::redirect_error(use_awaitable, ec));
+      stream.socket().shutdown(tcp::socket::shutdown_send, ec);
+      co_return;
+    }
     if (req.method() != http::verb::get) {
+      res.set(http::field::content_type, "application/json; charset=utf-8");
       res.result(http::status::method_not_allowed);
       res.body() = "{\"error\":\"method_not_allowed\"}";
-    } else if (target == "/api/health" || target == "/health") {
-      res.result(http::status::ok);
-      res.body() = "{\"ok\":true}";
-    } else if (target == "/api/stats") {
-      res.result(http::status::ok);
-      res.body() = build_stats_json();
-    } else if (target == "/api/events") {
-      res.result(http::status::ok);
-      res.body() = build_events_json();
-    } else if (target == "/api/users") {
-      res.result(http::status::ok);
-      res.body() = build_users_json();
+      add_admin_cors(res);
     } else {
-      res.result(http::status::not_found);
-      res.body() = "{\"error\":\"not_found\"}";
+      res.set(http::field::content_type, "application/json; charset=utf-8");
+      add_admin_cors(res);
+      if (target == "/api/health" || target == "/health") {
+        res.result(http::status::ok);
+        res.body() = "{\"ok\":true}";
+      } else if (target == "/api/stats") {
+        res.result(http::status::ok);
+        res.body() = build_stats_json();
+      } else if (target == "/api/events") {
+        res.result(http::status::ok);
+        res.body() = build_events_json();
+      } else if (target == "/api/users") {
+        res.result(http::status::ok);
+        res.body() = build_users_json();
+      } else {
+        res.result(http::status::not_found);
+        res.body() = "{\"error\":\"not_found\"}";
+      }
     }
     res.prepare_payload();
     co_await http::async_write(stream, res, boost::asio::redirect_error(use_awaitable, ec));
@@ -747,13 +765,11 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     }
   }
 
-  std::shared_ptr<std::string> pack_wire(std::uint32_t msg_type, std::uint64_t src_uid, std::uint64_t dst_uid,
-                                        std::uint32_t seq, const std::string& body) {
+  std::shared_ptr<std::string> pack_wire(std::uint32_t msg_type, std::uint32_t seq, const std::string& body) {
     proto::Header h{};
     h.msg_type = msg_type;
-    h.src_user_id = src_uid;
-    h.dst_user_id = dst_uid;
     h.seq = seq;
+    h.reserved0 = 0;
     h.body_len = static_cast<std::uint32_t>(body.size());
     auto ph = h.pack_le();
     auto out = std::make_shared<std::string>();
@@ -843,17 +859,19 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
 
   void send_reply(const std::shared_ptr<TcpSession>& to, const msgpack::sbuffer& buf, std::uint32_t seq = 0) {
     std::string body(buf.data(), buf.size());
-    to->send_frame(pack_wire(relay::kMsgServerReply, 0, 0, seq, body));
+    to->send_frame(pack_wire(relay::kMsgServerReply, seq, body));
   }
 
-  void send_err_reply(const std::shared_ptr<TcpSession>& from, std::uint32_t seq, const std::string& err) {
+  void send_err_reply(const std::shared_ptr<TcpSession>& from, std::uint32_t seq, int code, const std::string& message) {
     msgpack::sbuffer eb;
     msgpack::packer<msgpack::sbuffer> pk(&eb);
-    pk.pack_map(2);
+    pk.pack_map(3);
     pk.pack("ok");
     pk.pack(false);
-    pk.pack("error");
-    pk.pack(err);
+    pk.pack("code");
+    pk.pack(code);
+    pk.pack("message");
+    pk.pack(message);
     send_reply(from, eb, seq);
   }
 
@@ -876,62 +894,68 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     return std::string(buf.data(), buf.size());
   }
 
-  std::optional<std::uint64_t> username_to_uid(const std::string& username) {
-    std::lock_guard lk(mu_);
-    auto it = accounts_.find(username);
-    if (it == accounts_.end()) return std::nullopt;
-    return it->second.user_id;
-  }
+  struct LoginOk {
+    RecvMode effective_mode{};
+    std::optional<std::string> recv_mode_notice;
+  };
 
-  std::optional<std::string> try_authenticate(const std::shared_ptr<TcpSession>& self, const msgpack::object_map& mp) {
+  // 成功：返回 nullopt 并填 out_ok；失败：返回 {code,message}
+  std::optional<std::pair<int, std::string>> try_authenticate(const std::shared_ptr<TcpSession>& self, const msgpack::object_map& mp,
+                                                            LoginOk& out_ok) {
     const auto un = map_get_str(mp, "username");
     const auto pw = map_get_str(mp, "password");
     const auto pr = map_get_str(mp, "peer_role");
-    if (!un || un->empty()) return std::string("缺少 username");
-    if (!pw) return std::string("缺少 password");
-    if (!pr) return std::string("缺少 peer_role（user 或 admin）");
+    const auto rm = map_get_str(mp, "recv_mode");
+    if (!un || un->empty()) return std::make_pair(relay::errc::kInvalidLoginBody, std::string("缺少 username"));
+    if (!pw) return std::make_pair(relay::errc::kInvalidLoginBody, std::string("缺少 password"));
+    if (!pr) return std::make_pair(relay::errc::kInvalidLoginBody, std::string("缺少 peer_role（user 或 admin）"));
+    if (!rm) return std::make_pair(relay::errc::kInvalidLoginBody, std::string("缺少 recv_mode（broadcast 或 round_robin）"));
     std::string peer = *pr;
-    if (peer != "admin" && peer != "user") return std::string("peer_role 必须是 user 或 admin");
+    if (peer != "admin" && peer != "user") return std::make_pair(relay::errc::kInvalidLoginBody, std::string("peer_role 必须是 user 或 admin"));
     const bool want_admin = (peer == "admin");
-    const bool reg = map_get_bool(mp, "register", false);
+    const auto want_mode = parse_recv_mode_str(*rm);
+    if (!want_mode) return std::make_pair(relay::errc::kInvalidLoginBody, std::string("recv_mode 须为 broadcast 或 round_robin"));
 
+    const std::string cip = self->client_ip();
+    if (cip.empty() || !db_.ip_whitelisted(cip)) {
+      return std::make_pair(relay::errc::kIpNotAllowed, std::string("IP 不在白名单"));
+    }
+    db::MysqlStore::UserInfo uinfo{};
+    if (const auto e = db_.authenticate_or_register(*un, *pw, want_admin, uinfo)) {
+      return std::make_pair(relay::errc::kAuthFailed, *e);
+    }
+
+    const std::uint64_t uid = uinfo.id;
     std::vector<std::pair<std::shared_ptr<TcpSession>, std::string>> to_notify;
     {
       std::lock_guard lk(mu_);
-      if (reg) {
-        if (accounts_.find(*un) != accounts_.end()) return std::string("用户名已存在");
-        AccountRecord rec;
-        rec.username = *un;
-        rec.salt_hex = random_hex_salt(16);
-        rec.pass_hash_hex = hash_password(rec.salt_hex, *pw);
-        if (rec.pass_hash_hex.empty()) return std::string("口令处理失败");
-        rec.is_admin = want_admin;
-        rec.user_id = ++next_user_id_;
-        accounts_[rec.username] = rec;
-        uid_to_username_[rec.user_id] = rec.username;
-        auto& dq = user_deque_[rec.user_id];
-        dq.push_back(self);
-        while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
-          auto victim = dq.front();
-          dq.pop_front();
-          to_notify.push_back({victim, "因单用户连接数达到上限，服务端按策略释放了最旧的一条连接"});
-        }
-        self->mark_login(rec.user_id, rec.is_admin, rec.username);
+      uid_to_username_[uid] = *un;
+      name_to_uid_[*un] = uid;
+
+      const bool no_other_sessions =
+          (user_deque_.find(uid) == user_deque_.end() || user_deque_[uid].empty());
+      if (no_other_sessions) {
+        user_recv_mode_[uid] = *want_mode;
+        out_ok.effective_mode = *want_mode;
+        out_ok.recv_mode_notice = std::nullopt;
       } else {
-        auto it = accounts_.find(*un);
-        if (it == accounts_.end()) return std::string("用户不存在");
-        if (it->second.pass_hash_hex != hash_password(it->second.salt_hex, *pw)) return std::string("密码错误");
-        if (it->second.is_admin != want_admin) return std::string("登录所选权限与账号不一致");
-        const std::uint64_t uid = it->second.user_id;
-        auto& dq = user_deque_[uid];
-        dq.push_back(self);
-        while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
-          auto victim = dq.front();
-          dq.pop_front();
-          to_notify.push_back({victim, "因单用户连接数达到上限，服务端按策略释放了最旧的一条连接"});
+        const RecvMode established = user_recv_mode_[uid];
+        out_ok.effective_mode = established;
+        if (established != *want_mode) {
+          out_ok.recv_mode_notice = std::string("接收方式按首次 login 为准；若需更改，请关闭该用户全部连接后重新登录");
+        } else {
+          out_ok.recv_mode_notice = std::nullopt;
         }
-        self->mark_login(uid, it->second.is_admin, it->second.username);
       }
+
+      auto& dq = user_deque_[uid];
+      dq.push_back(self);
+      while (dq.size() > static_cast<std::size_t>(cfg_.session.max_connections_per_user)) {
+        auto victim = dq.front();
+        dq.pop_front();
+        to_notify.push_back({victim, "因单用户连接数达到上限，服务端按策略释放了最旧的一条连接"});
+      }
+      self->mark_login(uid, uinfo.is_admin, *un);
     }
     for (const auto& pr2 : to_notify) {
       if (pr2.first && pr2.first != self) notify_and_close(pr2.first, pr2.second, "max_connections_per_user");
@@ -939,20 +963,18 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     return std::nullopt;
   }
 
-  std::shared_ptr<TcpSession> find_user_connection(std::uint64_t uid, std::uint64_t conn_id) {
+  // 在锁外先查库并写入 name_to_uid_（在 deliver 中调用）
+  std::optional<std::uint64_t> ensure_uid_for_username(const std::string& username) {
+    {
+      std::lock_guard lk(mu_);
+      auto it = name_to_uid_.find(username);
+      if (it != name_to_uid_.end()) return it->second;
+    }
+    const auto id = db_.user_id_by_username(username);
+    if (!id) return std::nullopt;
     std::lock_guard lk(mu_);
-    auto it = user_deque_.find(uid);
-    if (it == user_deque_.end()) return nullptr;
-    if (conn_id == 0) {
-      for (const auto& s : it->second) {
-        if (s && s->is_open()) return s;
-      }
-      return nullptr;
-    }
-    for (const auto& s : it->second) {
-      if (s && s->is_open() && s->conn_id() == conn_id) return s;
-    }
-    return nullptr;
+    name_to_uid_[username] = *id;
+    return *id;
   }
 
   std::vector<std::shared_ptr<TcpSession>> list_user_connections(std::uint64_t uid) {
@@ -966,60 +988,43 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     return out;
   }
 
-  void deliver_unicast_by_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
-                                   std::uint64_t dst_conn_id, const std::string& payload, std::uint32_t seq) {
-    auto dst_uid = username_to_uid(dst_username);
-    if (!dst_uid) return;
-    auto s = find_user_connection(*dst_uid, dst_conn_id);
-    if (!s) return;
-    const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
-    s->send_frame(pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
-  }
+  void deliver_to_user_by_recv_mode(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
+                                    const std::string& payload, std::uint32_t seq) {
+    const auto dst_uid_opt = ensure_uid_for_username(dst_username);
+    if (!dst_uid_opt) return;
+    const std::uint64_t dst_uid = *dst_uid_opt;
+    std::lock_guard lk(mu_);
+    auto it = user_deque_.find(dst_uid);
+    if (it == user_deque_.end() || it->second.empty()) return;
+    RecvMode mode = RecvMode::kBroadcast;
+    if (const auto m = user_recv_mode_.find(dst_uid); m != user_recv_mode_.end()) mode = m->second;
 
-  void deliver_broadcast_to_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
-                                     const std::string& payload, std::uint32_t seq) {
-    auto dst_uid = username_to_uid(dst_username);
-    if (!dst_uid) return;
-    auto targets = list_user_connections(*dst_uid);
-    int sent = 0;
-    const int cap = cfg_.session.broadcast_max_recipients;
-    for (const auto& s : targets) {
-      if (sent >= cap) {
-        push_event(fwd::log::Level::kWarn, "broadcast truncated at max_recipients");
-        break;
-      }
-      const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
-      s->send_frame(pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
-      ++sent;
+    std::vector<std::shared_ptr<TcpSession>> open;
+    open.reserve(it->second.size());
+    for (const auto& s : it->second) {
+      if (s && s->is_open()) open.push_back(s);
     }
-  }
+    if (open.empty()) return;
 
-  void schedule_round_robin_username(const std::string& src_username, std::uint64_t src_conn_id, const std::string& dst_username,
-                                     const std::string& payload, std::uint32_t seq, int interval_ms) {
-    auto dst_uid = username_to_uid(dst_username);
-    if (!dst_uid) return;
-    auto targets = list_user_connections(*dst_uid);
-    if (interval_ms <= 0) interval_ms = cfg_.session.round_robin_default_interval_ms;
-    auto self = shared_from_this();
-    co_spawn(
-        io_,
-        [self, targets, payload, seq, src_username, src_conn_id, dst_username, interval_ms]() -> awaitable<void> {
-          for (std::size_t i = 0; i < targets.size(); ++i) {
-            auto s = targets[i];
-            if (s && s->is_open()) {
-              const auto body = self->pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
-              s->send_frame(self->pack_wire(relay::kMsgDeliver, 0, 0, seq, body));
-            }
-            if (i + 1 < targets.size() && interval_ms > 0) {
-              auto ex = co_await boost::asio::this_coro::executor;
-              boost::asio::steady_timer t(ex);
-              t.expires_after(std::chrono::milliseconds(interval_ms));
-              co_await t.async_wait(use_awaitable);
-            }
-          }
-          co_return;
-        },
-        detached);
+    if (mode == RecvMode::kBroadcast) {
+      int sent = 0;
+      const int cap = cfg_.session.broadcast_max_recipients;
+      for (const auto& s : open) {
+        if (sent >= cap) {
+          push_event(fwd::log::Level::kWarn, "broadcast truncated at max_recipients");
+          break;
+        }
+        const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
+        s->send_frame(pack_wire(relay::kMsgDeliver, seq, body));
+        ++sent;
+      }
+    } else {
+      std::size_t& cur = rr_next_index_[dst_uid];
+      const std::size_t pick = (cur++) % open.size();
+      auto s = open[pick];
+      const auto body = pack_deliver_envelope(payload, src_conn_id, s->conn_id(), src_username, dst_username);
+      s->send_frame(pack_wire(relay::kMsgDeliver, seq, body));
+    }
   }
 
   boost::asio::io_context& io_;
@@ -1034,9 +1039,12 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
   std::vector<std::shared_ptr<TcpSession>> all_;
   std::unordered_map<std::uint64_t, std::shared_ptr<TcpSession>> by_id_;
   std::unordered_map<std::uint64_t, std::deque<std::shared_ptr<TcpSession>>> user_deque_;
-  std::unordered_map<std::string, AccountRecord> accounts_;
   std::unordered_map<std::uint64_t, std::string> uid_to_username_;
-  std::uint64_t next_user_id_{0};
+  std::unordered_map<std::string, std::uint64_t> name_to_uid_;
+  std::unordered_map<std::uint64_t, RecvMode> user_recv_mode_;
+  std::unordered_map<std::uint64_t, std::size_t> rr_next_index_;
+
+  fwd::db::MysqlStore db_{};
 
   Metrics metrics_{};
   const std::uint64_t started_ms_{now_ms_wall()};
@@ -1116,14 +1124,19 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
       co_return;
     }
     const auto& mp = root.via.map;
-    if (const auto err = try_authenticate(from, mp)) {
-      send_err_reply(from, wire_h.seq, *err);
+    LoginOk lok{};
+    if (const auto fe = try_authenticate(from, mp, lok)) {
+      send_err_reply(from, wire_h.seq, fe->first, fe->second);
       co_return;
     }
     const std::string peer_str = from->is_admin_account() ? "admin" : "user";
     msgpack::sbuffer buf;
     msgpack::packer<msgpack::sbuffer> pk(&buf);
-    pk.pack_map(6);
+    if (lok.recv_mode_notice) {
+      pk.pack_map(8);
+    } else {
+      pk.pack_map(7);
+    }
     pk.pack("ok");
     pk.pack(true);
     pk.pack("op");
@@ -1136,6 +1149,12 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     pk.pack(from->username());
     pk.pack("peer_role");
     pk.pack(peer_str);
+    pk.pack("recv_mode");
+    pk.pack(recv_mode_cstr(lok.effective_mode));
+    if (lok.recv_mode_notice) {
+      pk.pack("recv_mode_notice");
+      pk.pack(*lok.recv_mode_notice);
+    }
     send_reply(from, buf, wire_h.seq);
     fwd::log::write(fwd::log::Level::kInfo, "login ok conn=" + std::to_string(from->conn_id()) + " ep=" +
                                                  from->endpoint_str() + " user=" + from->username() +
@@ -1175,41 +1194,20 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
   from->touch_heartbeat();
 
   if (mtype == relay::kClientData) {
-    const auto mode = map_get_str(mp, "mode").value_or("unicast");
     const auto* pay_obj = map_get_obj(mp, "payload");
     auto payload = extract_payload_bin(pay_obj);
     if (!payload) {
-      send_err_reply(from, wire_h.seq, "DATA 缺少 payload（bin 或 str）");
+      send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("DATA 缺少 payload（bin 或 str）"));
       co_return;
     }
     const auto dst_username = map_get_str(mp, "dst_username");
-    const std::uint64_t dst_conn = map_get_u64(mp, "dst_conn_id").value_or(0);
-    const int interval_ms = static_cast<int>(map_get_u64(mp, "interval_ms").value_or(0));
-    const std::uint64_t src_c = from->conn_id();
-    const std::string& src_un = from->username();
-
-    if (mode == "unicast") {
-      if (!dst_username || dst_username->empty()) {
-        send_err_reply(from, wire_h.seq, "unicast 需要 dst_username");
-        co_return;
-      }
-      deliver_unicast_by_username(src_un, src_c, *dst_username, dst_conn, *payload, wire_h.seq);
-    } else if (mode == "broadcast") {
-      if (!dst_username || dst_username->empty()) {
-        send_err_reply(from, wire_h.seq, "broadcast 需要 dst_username（发往该用户全部连接）");
-        co_return;
-      }
-      deliver_broadcast_to_username(src_un, src_c, *dst_username, *payload, wire_h.seq);
-    } else if (mode == "round_robin" || mode == "roundrobin") {
-      if (!dst_username || dst_username->empty()) {
-        send_err_reply(from, wire_h.seq, "round_robin 需要 dst_username（该用户全部连接等间隔轮询）");
-        co_return;
-      }
-      schedule_round_robin_username(src_un, src_c, *dst_username, *payload, wire_h.seq, interval_ms);
-    } else {
-      send_err_reply(from, wire_h.seq, "未知 mode");
+    if (!dst_username || dst_username->empty()) {
+      send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("DATA 需要 dst_username"));
       co_return;
     }
+    const std::uint64_t src_c = from->conn_id();
+    const std::string& src_un = from->username();
+    deliver_to_user_by_recv_mode(src_un, src_c, *dst_username, *payload, wire_h.seq);
     msgpack::sbuffer ack;
     msgpack::packer<msgpack::sbuffer> pk(&ack);
     pk.pack_map(2);
@@ -1223,7 +1221,7 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
 
   if (mtype == relay::kClientControl) {
     if (!from->is_admin_account()) {
-      send_err_reply(from, wire_h.seq, "需要管理员账号权限");
+      send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("需要管理员账号权限"));
       co_return;
     }
     const auto action = map_get_str(mp, "action").value_or("");
@@ -1268,7 +1266,7 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
     if (action == "kick_user") {
       const auto target = map_get_u64(mp, "target_user_id");
       if (!target) {
-        send_err_reply(from, wire_h.seq, "kick_user 需要 target_user_id");
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("kick_user 需要 target_user_id"));
         co_return;
       }
       std::vector<std::shared_ptr<TcpSession>> victims;
@@ -1297,19 +1295,254 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
       send_reply(from, buf, wire_h.seq);
       co_return;
     }
-    send_err_reply(from, wire_h.seq, "unknown action");
+    send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("unknown action"));
     co_return;
   }
 
-  send_err_reply(from, wire_h.seq, "未知 msg_type（已登录帧须为 heartbeat=2 / control=3 / data=4）");
+  send_err_reply(from, wire_h.seq, relay::errc::kProtocol,
+                 std::string("未知 msg_type（已登录帧须为 heartbeat=2 / control=3 / data=4）"));
   co_return;
 }
 
 }  // namespace fwd
 
+namespace fwd::db {
+
+MysqlStore::~MysqlStore() { close(); }
+
+void MysqlStore::close() {
+  std::lock_guard lk(mu_);
+  if (conn_) {
+    mysql_close(conn_);
+    conn_ = nullptr;
+  }
+}
+
+void MysqlStore::connect(const Config::Mysql& c) {
+  std::lock_guard lk(mu_);
+  if (conn_) {
+    mysql_close(conn_);
+    conn_ = nullptr;
+  }
+  cfg_ = c;
+  MYSQL* raw = mysql_init(nullptr);
+  if (!raw) throw std::runtime_error("mysql_init failed");
+  (void)mysql_options(raw, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+  if (!mysql_real_connect(raw, c.host.c_str(), c.user.c_str(), c.password.c_str(), c.database.c_str(),
+                          static_cast<unsigned int>(c.port), nullptr, 0)) {
+    const std::string err = mysql_error(raw);
+    mysql_close(raw);
+    throw std::runtime_error("mysql_real_connect: " + err);
+  }
+  conn_ = raw;
+}
+
+bool MysqlStore::ip_whitelisted(const std::string& client_ip) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return false;
+  static const char q[] = "SELECT 1 FROM ip_allowlist WHERE ip = ? LIMIT 1";
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return false;
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    mysql_stmt_close(st);
+    return false;
+  }
+  char buf[256]{};
+  const unsigned long len = static_cast<unsigned long>(std::min(client_ip.size(), sizeof(buf) - 1));
+  std::memcpy(buf, client_ip.data(), len);
+  MYSQL_BIND bind{};
+  unsigned long plen = len;
+  bind.buffer_type = MYSQL_TYPE_STRING;
+  bind.buffer = buf;
+  bind.buffer_length = sizeof(buf);
+  bind.length = &plen;
+  if (mysql_stmt_bind_param(st, &bind) != 0) {
+    mysql_stmt_close(st);
+    return false;
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    mysql_stmt_close(st);
+    return false;
+  }
+  (void)mysql_stmt_store_result(st);
+  const my_ulonglong n = mysql_stmt_num_rows(st);
+  mysql_stmt_close(st);
+  return n > 0;
+}
+
+std::optional<std::string> MysqlStore::authenticate_or_register(const std::string& username, const std::string& password,
+                                                                bool want_admin, UserInfo& out) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+
+  static const char sel[] = "SELECT id, password, is_admin FROM users WHERE username = ? LIMIT 1";
+  static const char ins[] = "INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)";
+
+  for (int attempt = 0; attempt < 4; ++attempt) {
+    MYSQL_STMT* st = mysql_stmt_init(conn_);
+    if (!st) return std::string("mysql_stmt_init");
+    if (mysql_stmt_prepare(st, sel, static_cast<unsigned long>(sizeof(sel) - 1)) != 0) {
+      const std::string e = mysql_stmt_error(st);
+      mysql_stmt_close(st);
+      return e;
+    }
+    char uname[512]{};
+    const unsigned long ulen = static_cast<unsigned long>(std::min(username.size(), sizeof(uname) - 1));
+    std::memcpy(uname, username.data(), ulen);
+    MYSQL_BIND pbind{};
+    unsigned long ulen_b = ulen;
+    pbind.buffer_type = MYSQL_TYPE_STRING;
+    pbind.buffer = uname;
+    pbind.buffer_length = sizeof(uname);
+    pbind.length = &ulen_b;
+    if (mysql_stmt_bind_param(st, &pbind) != 0) {
+      mysql_stmt_close(st);
+      return std::string("bind param");
+    }
+    my_ulonglong idv = 0;
+    char pwdb[4096]{};
+    unsigned long pwdlen = 0;
+    std::int8_t isadmin = 0;
+    bool n0 = false, n1 = false, n2 = false;
+    MYSQL_BIND rb[3]{};
+    rb[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    rb[0].buffer = &idv;
+    rb[0].is_unsigned = true;
+    rb[0].is_null = &n0;
+    rb[1].buffer_type = MYSQL_TYPE_STRING;
+    rb[1].buffer = pwdb;
+    rb[1].buffer_length = sizeof(pwdb);
+    rb[1].length = &pwdlen;
+    rb[1].is_null = &n1;
+    rb[2].buffer_type = MYSQL_TYPE_TINY;
+    rb[2].buffer = &isadmin;
+    rb[2].is_null = &n2;
+    if (mysql_stmt_bind_result(st, rb) != 0) {
+      mysql_stmt_close(st);
+      return std::string("bind result");
+    }
+    if (mysql_stmt_execute(st) != 0) {
+      const std::string e = mysql_stmt_error(st);
+      mysql_stmt_close(st);
+      return e;
+    }
+    const int f = mysql_stmt_fetch(st);
+    if (f == 0) {
+      mysql_stmt_close(st);
+      if (n0 || n1) return std::string("数据异常");
+      const std::string got_pw(pwdb, pwdlen);
+      if (got_pw != password) return std::string("用户不存在或密码错误");
+      const bool db_ad = (!n2 && isadmin != 0);
+      if (db_ad != want_admin) return std::string("登录所选权限与账号不一致");
+      out.id = static_cast<std::uint64_t>(idv);
+      out.is_admin = db_ad;
+      return std::nullopt;
+    }
+    if (f == MYSQL_NO_DATA) {
+      mysql_stmt_close(st);
+      MYSQL_STMT* inst = mysql_stmt_init(conn_);
+      if (!inst) return std::string("mysql_stmt_init");
+      if (mysql_stmt_prepare(inst, ins, static_cast<unsigned long>(sizeof(ins) - 1)) != 0) {
+        const std::string e = mysql_stmt_error(inst);
+        mysql_stmt_close(inst);
+        return e;
+      }
+      char uname2[512]{};
+      std::memcpy(uname2, uname, ulen);
+      uname2[ulen] = '\0';
+      char pwbuf[4096]{};
+      const unsigned long pwcopy =
+          static_cast<unsigned long>(std::min(password.size(), sizeof(pwbuf) - 1));
+      std::memcpy(pwbuf, password.data(), pwcopy);
+      std::int8_t ad = want_admin ? 1 : 0;
+      MYSQL_BIND ib[3]{};
+      unsigned long un2 = ulen;
+      unsigned long pwl = pwcopy;
+      ib[0].buffer_type = MYSQL_TYPE_STRING;
+      ib[0].buffer = uname2;
+      ib[0].buffer_length = sizeof(uname2);
+      ib[0].length = &un2;
+      ib[1].buffer_type = MYSQL_TYPE_STRING;
+      ib[1].buffer = pwbuf;
+      ib[1].buffer_length = sizeof(pwbuf);
+      ib[1].length = &pwl;
+      ib[2].buffer_type = MYSQL_TYPE_TINY;
+      ib[2].buffer = &ad;
+      if (mysql_stmt_bind_param(inst, ib) != 0) {
+        mysql_stmt_close(inst);
+        return std::string("bind insert param");
+      }
+      if (mysql_stmt_execute(inst) != 0) {
+        const unsigned int en = mysql_errno(conn_);
+        mysql_stmt_close(inst);
+        if (en == 1062) {
+          continue;
+        }
+        return mysql_error(conn_);
+      }
+      mysql_stmt_close(inst);
+      out.id = static_cast<std::uint64_t>(mysql_insert_id(conn_));
+      out.is_admin = want_admin;
+      return std::nullopt;
+    }
+    mysql_stmt_close(st);
+    return std::string("读用户失败");
+  }
+  return std::string("注册冲突，请稍后重试");
+}
+
+std::optional<std::uint64_t> MysqlStore::user_id_by_username(const std::string& username) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::nullopt;
+  static const char q[] = "SELECT id FROM users WHERE username = ? LIMIT 1";
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::nullopt;
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    mysql_stmt_close(st);
+    return std::nullopt;
+  }
+  char uname[512]{};
+  const unsigned long ulen = static_cast<unsigned long>(std::min(username.size(), sizeof(uname) - 1));
+  std::memcpy(uname, username.data(), ulen);
+  MYSQL_BIND pbind{};
+  unsigned long ulen_b = ulen;
+  pbind.buffer_type = MYSQL_TYPE_STRING;
+  pbind.buffer = uname;
+  pbind.buffer_length = sizeof(uname);
+  pbind.length = &ulen_b;
+  if (mysql_stmt_bind_param(st, &pbind) != 0) {
+    mysql_stmt_close(st);
+    return std::nullopt;
+  }
+  my_ulonglong idv = 0;
+  bool n0 = false;
+  MYSQL_BIND rb{};
+  rb.buffer_type = MYSQL_TYPE_LONGLONG;
+  rb.buffer = &idv;
+  rb.is_unsigned = true;
+  rb.is_null = &n0;
+  if (mysql_stmt_bind_result(st, &rb) != 0) {
+    mysql_stmt_close(st);
+    return std::nullopt;
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    mysql_stmt_close(st);
+    return std::nullopt;
+  }
+  if (mysql_stmt_fetch(st) != 0) {
+    mysql_stmt_close(st);
+    return std::nullopt;
+  }
+  mysql_stmt_close(st);
+  if (n0) return std::nullopt;
+  return static_cast<std::uint64_t>(idv);
+}
+
+}  // namespace fwd::db
+
 int main(int argc, char** argv) {
   try {
-    std::string cfg_path = "configs/dev/forwarder.json";
+    std::string cfg_path = "deliver/server/forwarder.json";
     if (argc >= 2) cfg_path = argv[1];
 
     auto cfg = fwd::load_config_or_throw(cfg_path);

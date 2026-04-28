@@ -95,6 +95,7 @@ asio_forwarder_EXTERNAL_OBJECTS =
 
 asio_forwarder: CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o
 asio_forwarder: CMakeFiles/asio_forwarder.dir/build.make
+asio_forwarder: /usr/lib/x86_64-linux-gnu/libmysqlclient.so
 asio_forwarder: CMakeFiles/asio_forwarder.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable asio_forwarder"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/asio_forwarder.dir/link.txt --verbose=$(VERBOSE)

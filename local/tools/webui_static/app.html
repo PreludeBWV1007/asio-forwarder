@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>中继监控与模拟终端</title>
+    <style>
+      :root {
+        --bg: #0b1220;
+        --text: #e6eefc;
+        --muted: #9bb0d1;
+        --border: rgba(255, 255, 255, 0.08);
+        --accent: #6ea8fe;
+        --danger: #ff6b6b;
+        --ok: #2ecc71;
+        --panel: rgba(255, 255, 255, 0.02);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      .topbar {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
+      }
+      .topbar h1 {
+        margin: 0 0 6px 0;
+        font-size: 18px;
+      }
+      .topbar .hint {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .alert {
+        margin: 0 18px 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 107, 107, 0.35);
+        background: rgba(255, 107, 107, 0.08);
+        color: #ffb3b3;
+        font-size: 13px;
+        display: none;
+      }
+      .alert.show {
+        display: block;
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        padding: 14px 18px 28px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      @media (max-width: 960px) {
+        .wrap {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px;
+        background: var(--panel);
+        margin-bottom: 12px;
+      }
+      .card h2 {
+        margin: 0 0 10px 0;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .btns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(110, 168, 254, 0.16);
+        color: var(--text);
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      button.secondary {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      button.danger {
+        background: rgba(255, 107, 107, 0.18);
+        color: #ffb3b3;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 8px 6px;
+        text-align: left;
+      }
+      th {
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        margin: 6px 0 4px;
+      }
+      input,
+      select,
+      textarea {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.28);
+        color: var(--text);
+        font-size: 13px;
+      }
+      textarea {
+        min-height: 72px;
+        font-family: ui-monospace, monospace;
+        resize: vertical;
+      }
+      pre.log {
+        font-size: 11px;
+        background: rgba(0, 0, 0, 0.35);
+        padding: 10px;
+        border-radius: 8px;
+        max-height: 240px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 10px;
+        align-items: center;
+      }
+      .tab {
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        font-size: 12px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      .tab.on {
+        border-color: rgba(110, 168, 254, 0.45);
+        background: rgba(110, 168, 254, 0.12);
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .modal-bg {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        padding: 16px;
+      }
+      .modal-bg.on {
+        display: flex;
+      }
+      .modal {
+        background: #121a2b;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        max-width: 420px;
+        width: 100%;
+        max-height: 90vh;
+        overflow: auto;
+      }
+      .modal h3 {
+        margin: 0 0 12px 0;
+        font-size: 15px;
+      }
+      .modal .row2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <h1>中继 — 监控与模拟终端</h1>
+      <p class="hint">
+        左侧：从只读管理口拉取<strong>当前在线用户</strong>（须先启动 C++ 进程）；维护<strong>两张表</strong>——允许连入的
+        IP、库里的账号。右侧：通过浏览器经 WebSocket 在本机<strong>连一条 TCP</strong> 做收发；
+        <strong>载荷一律按二进制</strong>发（十六进制或 Base64）。登录时若库中尚无该用户名，会<strong>自动写入账号再登录</strong>（须先通过
+        IP 白名单）。
+      </p>
+      <p class="hint">本页转发的管理口：<strong id="adminLabel">__INJECT_ADMIN__</strong></p>
+    </div>
+    <div id="globalAlert" class="alert"></div>
+
+    <div class="wrap">
+      <div class="col-left">
+        <div class="card">
+          <h2>运行状态</h2>
+          <p id="lineHealth" class="muted">健康：探测中…</p>
+          <p id="lineStats" class="muted">统计：—</p>
+          <p id="linePoll" class="muted">在线列表约每 2 秒拉取一次</p>
+        </div>
+        <div class="card">
+          <h2>在线用户（来自中继）</h2>
+          <div class="btns">
+            <button type="button" class="secondary" id="btnPollNow">立即刷新</button>
+            <button type="button" id="openModalSess">新建客户端会话</button>
+            <button type="button" id="openModalAcc">新建库内账号</button>
+            <button type="button" id="openModalIp">加白名单 IP</button>
+          </div>
+          <div id="onlineErr" class="muted" style="color: var(--danger); margin-bottom: 8px; display: none"></div>
+          <div id="onlineBody">加载中…</div>
+        </div>
+        <div class="card">
+          <h2>允许连入的 IP</h2>
+          <div id="wlErr" style="color: var(--danger); font-size: 12px; display: none"></div>
+          <div id="wlBody">—</div>
+        </div>
+        <div class="card">
+          <h2>库内账号（亦可由客户端首次登录自动创建）</h2>
+          <div id="acErr" style="color: var(--danger); font-size: 12px; display: none"></div>
+          <div id="acBody">—</div>
+        </div>
+        <div class="card">
+          <h2>最近事件</h2>
+          <pre class="log" id="evPre">—</pre>
+        </div>
+      </div>
+
+      <div class="col-right">
+        <div class="card">
+          <h2>模拟终端（二进制载荷）</h2>
+          <p class="muted">每个会话一条独立 TCP + WebSocket；可开多个对照测。</p>
+          <div class="tabs" id="sessTabs"></div>
+          <div id="sessEmpty" class="muted">暂无会话，点「新建客户端会话」。</div>
+          <div id="sessPanel" style="display: none">
+            <label>目标登录名</label>
+            <input id="fDst" placeholder="对方用户名" />
+            <label>载荷编码</label>
+            <select id="fEnc">
+              <option value="hex">十六进制（可含空格）</option>
+              <option value="b64">Base64</option>
+            </select>
+            <label>载荷（二进制）</label>
+            <textarea id="fPayload" placeholder="hex 例: 48 65 6c 6c 6f  或  b64 例: aGVsbG8="></textarea>
+            <div class="btns">
+              <button type="button" id="fSend">发送 DATA</button>
+              <button type="button" class="secondary" id="fList">列出在线</button>
+              <button type="button" class="secondary" id="fHb">心跳</button>
+            </div>
+            <label>踢用户（填数字 user_id，需管理账号）</label>
+            <div class="row2" style="margin-top: 6px">
+              <input id="fKickId" type="number" placeholder="user_id" />
+              <button type="button" class="danger" id="fKick">踢</button>
+            </div>
+            <h2 style="margin-top: 14px">会话日志</h2>
+            <pre class="log" id="fLog"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态：新会话 -->
+    <div class="modal-bg" id="mSess">
+      <div class="modal">
+        <h3>新建客户端会话</h3>
+        <div class="row2">
+          <div>
+            <label>业务口 Host</label>
+            <input id="sessHost" value="127.0.0.1" />
+          </div>
+          <div>
+            <label>端口</label>
+            <input id="sessPort" type="number" value="19000" />
+          </div>
+        </div>
+        <label>用户名</label>
+        <input id="sessUser" />
+        <label>口令（新用户将以此写入数据库）</label>
+        <input id="sessPass" type="password" />
+        <label>是否管理账号</label>
+        <select id="sessRole">
+          <option value="user">否</option>
+          <option value="admin">是</option>
+        </select>
+        <label>多连接时收消息方式</label>
+        <select id="sessRecv">
+          <option value="broadcast">每连接都收</option>
+          <option value="round_robin">轮流一条连接</option>
+        </select>
+        <label>自动心跳间隔（秒，0=关）</label>
+        <input id="sessHb" type="number" value="5" />
+        <div class="btns" style="margin-top: 12px">
+          <button type="button" id="sessGo">连接并登录</button>
+          <button type="button" class="secondary" id="sessCancel">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-bg" id="mAcc">
+      <div class="modal">
+        <h3>新建库内账号</h3>
+        <label>用户名</label>
+        <input id="mAccUser" />
+        <label>口令</label>
+        <input id="mAccPass" type="password" />
+        <label>是否管理</label>
+        <select id="mAccAd">
+          <option value="0">否</option>
+          <option value="1">是</option>
+        </select>
+        <div class="btns" style="margin-top: 12px">
+          <button type="button" id="mAccOk">保存</button>
+          <button type="button" class="secondary" id="mAccCancel">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-bg" id="mIp">
+      <div class="modal">
+        <h3>加白名单 IP</h3>
+        <label>IP（须与客户端来源一致，常为本机 127.0.0.1）</label>
+        <input id="mIpVal" placeholder="127.0.0.1" />
+        <div class="btns" style="margin-top: 12px">
+          <button type="button" id="mIpOk">添加</button>
+          <button type="button" class="secondary" id="mIpCancel">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const $ = (id) => document.getElementById(id);
+        const adminLabel = "__INJECT_ADMIN__";
+        $("adminLabel").textContent = adminLabel;
+
+        async function jget(url) {
+          const r = await fetch(url);
+          const t = await r.text();
+          let o;
+          try {
+            o = JSON.parse(t);
+          } catch {
+            o = { _raw: t };
+          }
+          if (!r.ok) {
+            const err = new Error(t || String(r.status));
+            err.detail = o;
+            throw err;
+          }
+          return o;
+        }
+
+        function showAlert(msg) {
+          const el = $("globalAlert");
+          if (!msg) {
+            el.classList.remove("show");
+            el.textContent = "";
+          } else {
+            el.textContent = msg;
+            el.classList.add("show");
+          }
+        }
+
+        async function pollRelay() {
+          showAlert("");
+          try {
+            const h = await jget("/api/ops/relay/health");
+            $("lineHealth").textContent = "健康：" + (h.ok === true ? "正常" : JSON.stringify(h));
+            $("lineHealth").style.color = h.ok ? "var(--ok)" : "var(--danger)";
+          } catch (e) {
+            $("lineHealth").textContent = "健康：失败 — " + e.message;
+            $("lineHealth").style.color = "var(--danger)";
+            showAlert(
+              "无法访问中继只读管理口 " +
+                adminLabel +
+                "。请确认：1) 已启动 asio_forwarder；2) webui 的 --admin-host / --admin-port 与配置一致；3) 不要用错协议或端口。"
+            );
+          }
+          try {
+            const s = await jget("/api/ops/relay/stats");
+            $("lineStats").textContent =
+              "连接=" +
+              (s.sessions_alive ?? "?") +
+              " 已登录=" +
+              (s.sessions_logged_in ?? "?") +
+              " 不同用户=" +
+              (s.unique_users ?? "?") +
+              " 入/出帧=" +
+              (s.frames_in ?? "?") +
+              "/" +
+              (s.frames_out ?? "?");
+          } catch {
+            $("lineStats").textContent = "统计：不可用";
+          }
+          try {
+            const u = await jget("/api/ops/relay/users");
+            $("onlineErr").style.display = "none";
+            const users = u.users || [];
+            if (users.length === 0) {
+              $("onlineBody").innerHTML =
+                "<p class='muted'>暂无在线用户（无人登录或管理口不可达）。可先开右侧模拟终端登录。</p>";
+            } else {
+              const rows = users
+                .map(function (x) {
+                  const role = x.is_admin ? "管理" : "普通";
+                  const n = (x.connections || []).length;
+                  return (
+                    "<tr><td>" +
+                    esc(x.username) +
+                    "</td><td>" +
+                    x.user_id +
+                    "</td><td>" +
+                    role +
+                    "</td><td>" +
+                    esc(x.recv_mode || "") +
+                    "</td><td>" +
+                    n +
+                    "</td><td><button type='button' class='secondary opeek' data-j=\"" +
+                    encodeURIComponent(JSON.stringify(x)) +
+                    "\">详情</button> <button type='button' class='secondary osess' data-pref=\"" +
+                    encodeURIComponent(x.username) +
+                    '">会话</button></td></tr>'
+                  );
+                })
+                .join("");
+              $("onlineBody").innerHTML =
+                "<table><thead><tr><th>登录名</th><th>用户ID</th><th>类型</th><th>收消息策略</th><th>连接数</th><th>操作</th></tr></thead><tbody>" +
+                rows +
+                "</tbody></table>";
+              $("onlineBody").querySelectorAll(".opeek").forEach(function (b) {
+                b.addEventListener("click", function () {
+                  try {
+                    const o = JSON.parse(decodeURIComponent(this.getAttribute("data-j")));
+                    alert(JSON.stringify(o, null, 2));
+                  } catch (e) {
+                    alert(e);
+                  }
+                });
+              });
+              $("onlineBody").querySelectorAll(".osess").forEach(function (b) {
+                b.addEventListener("click", function () {
+                  $("sessUser").value = decodeURIComponent(this.getAttribute("data-pref") || "");
+                  $("mSess").classList.add("on");
+                });
+              });
+            }
+          } catch (e) {
+            $("onlineErr").style.display = "block";
+            $("onlineErr").textContent = "在线列表失败: " + e.message;
+            $("onlineBody").innerHTML = "";
+          }
+          try {
+            const ev = await jget("/api/ops/relay/events");
+            $("evPre").textContent = JSON.stringify((ev.events || []).slice(-25).reverse(), null, 2);
+          } catch {
+            $("evPre").textContent = "—";
+          }
+        }
+
+        function esc(s) {
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/"/g, "&quot;");
+        }
+
+        setInterval(pollRelay, 2000);
+        $("btnPollNow").addEventListener("click", pollRelay);
+        pollRelay();
+
+        /* —— 白名单 / 账号 —— */
+        async function loadWl() {
+          $("wlErr").style.display = "none";
+          try {
+            const o = await jget("/api/ops/whitelist");
+            const rows = (o.rows || [])
+              .map(
+                (r) =>
+                  "<tr><td>" +
+                  r.id +
+                  "</td><td>" +
+                  esc(r.ip) +
+                  '</td><td><button type="button" class="danger wdel" data-id="' +
+                  r.id +
+                  '">删</button></td></tr>'
+              )
+              .join("");
+            $("wlBody").innerHTML =
+              "<table><thead><tr><th>id</th><th>IP</th><th></th></tr></thead><tbody>" +
+              (rows || "<tr><td colspan='3'>无</td></tr>") +
+              "</tbody></table>";
+            $("wlBody").querySelectorAll(".wdel").forEach((b) => {
+              b.addEventListener("click", async function () {
+                if (!confirm("删除？")) return;
+                await fetch("/api/ops/whitelist/" + this.dataset.id, { method: "DELETE" });
+                loadWl();
+              });
+            });
+          } catch (e) {
+            $("wlErr").style.display = "block";
+            $("wlErr").textContent = String(e.message || e);
+          }
+        }
+        async function loadAc() {
+          $("acErr").style.display = "none";
+          try {
+            const o = await jget("/api/ops/accounts");
+            const rows = (o.rows || [])
+              .map(
+                (r) =>
+                  "<tr><td>" +
+                  r.id +
+                  "</td><td>" +
+                  esc(r.username) +
+                  "</td><td>" +
+                  (r.is_admin ? "管理" : "普通") +
+                  "</td><td><button type='button' class=\"danger acdel\" data-id=\"" +
+                  r.id +
+                  '">删</button></td></tr>'
+              )
+              .join("");
+            $("acBody").innerHTML =
+              "<table><thead><tr><th>id</th><th>名</th><th>类型</th><th></th></tr></thead><tbody>" +
+              (rows || "<tr><td colspan='4'>无</td></tr>") +
+              "</tbody></table>";
+            $("acBody").querySelectorAll(".acdel").forEach((b) => {
+              b.addEventListener("click", async function () {
+                if (!confirm("删除？")) return;
+                await fetch("/api/ops/accounts/" + this.dataset.id, { method: "DELETE" });
+                loadAc();
+              });
+            });
+          } catch (e) {
+            $("acErr").style.display = "block";
+            $("acErr").textContent = String(e.message || e);
+          }
+        }
+        loadWl();
+        loadAc();
+
+        /* —— 多会话 WebSocket —— */
+        let sessions = [];
+        let activeId = null;
+
+        function renderTabs() {
+          const host = $("sessTabs");
+          host.innerHTML = "";
+          if (sessions.length === 0) {
+            $("sessEmpty").style.display = "block";
+            $("sessPanel").style.display = "none";
+            return;
+          }
+          $("sessEmpty").style.display = "none";
+          $("sessPanel").style.display = "block";
+          sessions.forEach(function (s) {
+            const d = document.createElement("span");
+            d.className = "tab" + (s.id === activeId ? " on" : "");
+            d.textContent = s.label;
+            d.title = s.label;
+            d.addEventListener("click", function () {
+              activeId = s.id;
+              renderTabs();
+              syncFormFromSession();
+            });
+            host.appendChild(d);
+          });
+          const cx = document.createElement("button");
+          cx.className = "secondary";
+          cx.type = "button";
+          cx.textContent = "关闭当前会话";
+          cx.addEventListener("click", closeActiveSession);
+          host.appendChild(cx);
+        }
+
+        function getActive() {
+          return sessions.find(function (s) {
+            return s.id === activeId;
+          });
+        }
+
+        function syncFormFromSession() {
+          const s = getActive();
+          $("fLog").textContent = s ? s.log.join("\n") : "";
+        }
+
+        function appendLog(sid, line) {
+          const s = sessions.find(function (x) {
+            return x.id === sid;
+          });
+          if (!s) return;
+          s.log.push(new Date().toISOString() + " " + line);
+          if (sid === activeId) $("fLog").textContent = s.log.join("\n");
+        }
+
+        function closeActiveSession() {
+          const i = sessions.findIndex(function (s) {
+            return s.id === activeId;
+          });
+          if (i < 0) return;
+          const s = sessions[i];
+          if (s.ws) {
+            try {
+              s.ws.close();
+            } catch (e) {}
+          }
+          sessions.splice(i, 1);
+          activeId = sessions[0] ? sessions[0].id : null;
+          renderTabs();
+          syncFormFromSession();
+        }
+
+        function openModal(id) {
+          $(id).classList.add("on");
+        }
+        function closeModal(id) {
+          $(id).classList.remove("on");
+        }
+        $("openModalSess").addEventListener("click", () => openModal("mSess"));
+        $("sessCancel").addEventListener("click", () => closeModal("mSess"));
+        $("openModalAcc").addEventListener("click", () => openModal("mAcc"));
+        $("mAccCancel").addEventListener("click", () => closeModal("mAcc"));
+        $("openModalIp").addEventListener("click", () => openModal("mIp"));
+        $("mIpCancel").addEventListener("click", () => closeModal("mIp"));
+
+        $("mIpOk").addEventListener("click", async function () {
+          const ip = $("mIpVal").value.trim();
+          if (!ip) return;
+          const r = await fetch("/api/ops/whitelist", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ip }),
+          });
+          if (!r.ok) alert(await r.text());
+          closeModal("mIp");
+          $("mIpVal").value = "";
+          loadWl();
+        });
+
+        $("mAccOk").addEventListener("click", async function () {
+          const r = await fetch("/api/ops/accounts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: $("mAccUser").value.trim(),
+              password: $("mAccPass").value,
+              is_admin: parseInt($("mAccAd").value, 10) || 0,
+            }),
+          });
+          if (!r.ok) alert(await r.text());
+          else {
+            closeModal("mAcc");
+            $("mAccUser").value = "";
+            $("mAccPass").value = "";
+            loadAc();
+          }
+        });
+
+        function connectSession() {
+          const host = $("sessHost").value.trim() || "127.0.0.1";
+          const port = parseInt($("sessPort").value, 10) || 19000;
+          const user = $("sessUser").value.trim();
+          const pass = $("sessPass").value;
+          const peer = $("sessRole").value;
+          const recv = $("sessRecv").value;
+          const hb = parseFloat($("sessHb").value) || 0;
+          if (!user) {
+            alert("填写用户名");
+            return;
+          }
+          const sid = "s" + Date.now();
+          const label = user + "@" + host + ":" + port;
+          const sess = { id: sid, label, log: [], ws: null };
+          sessions.push(sess);
+          activeId = sid;
+          renderTabs();
+          syncFormFromSession();
+
+          const proto = location.protocol === "https:" ? "wss:" : "ws:";
+          const ws = new WebSocket(proto + "//" + location.host + "/ws");
+          sess.ws = ws;
+          ws.onopen = function () {
+            ws.send(
+              JSON.stringify({
+                op: "connect",
+                host,
+                port,
+                hb_interval_s: hb <= 0 ? "off" : hb,
+              })
+            );
+            setTimeout(function () {
+              ws.send(
+                JSON.stringify({
+                  op: "login",
+                  username: user,
+                  password: pass,
+                  peer_role: peer,
+                  recv_mode: recv,
+                })
+              );
+              appendLog(sid, "[open] connect + login sent");
+            }, 120);
+          };
+          ws.onmessage = function (ev) {
+            appendLog(sid, ev.data);
+          };
+          ws.onerror = function () {
+            appendLog(sid, "[ws error]");
+          };
+          ws.onclose = function () {
+            appendLog(sid, "[ws closed]");
+          };
+          closeModal("mSess");
+        }
+        $("sessGo").addEventListener("click", connectSession);
+
+        function sendWs(obj) {
+          const s = getActive();
+          if (!s || !s.ws || s.ws.readyState !== 1) {
+            alert("无活动会话或未连上");
+            return;
+          }
+          s.ws.send(JSON.stringify(obj));
+        }
+
+        $("fSend").addEventListener("click", function () {
+          sendWs({
+            op: "send",
+            dst_username: $("fDst").value.trim(),
+            payload_encoding: $("fEnc").value,
+            payload: $("fPayload").value.trim(),
+          });
+        });
+        $("fList").addEventListener("click", function () {
+          sendWs({ op: "control", action: "list_users" });
+        });
+        $("fHb").addEventListener("click", function () {
+          sendWs({ op: "heartbeat" });
+        });
+        $("fKick").addEventListener("click", function () {
+          sendWs({
+            op: "control",
+            action: "kick_user",
+            target_user_id: parseInt($("fKickId").value, 10) || 0,
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>

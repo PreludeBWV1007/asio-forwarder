@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-生产级 Python 客户端接口（v2：Header.msg_type = login/heartbeat/control/data）。
+生产级 Python 客户端接口（v3 头 + Header.msg_type = login/heartbeat/control/data）。
 
 - DELIVER(200) body 为 msgpack：{payload, src_conn_id, dst_conn_id}
 - SERVER_REPLY(201)、KICK(202)
@@ -33,8 +33,6 @@ from forwarder_wire import (
 
 @dataclass(frozen=True)
 class Deliver:
-    src_user_id: int
-    dst_user_id: int
     seq: int
     payload: bytes
     src_conn_id: int
@@ -132,18 +130,20 @@ class RelayClient:
         password: str,
         *,
         peer_role: str = "user",
-        register: bool = False,
+        recv_mode: str = "broadcast",
     ) -> int:
         if self._sock is None:
             raise RuntimeError("not connected")
         if peer_role not in ("user", "admin"):
             peer_role = "user"
+        if recv_mode not in ("broadcast", "round_robin", "roundrobin"):
+            recv_mode = "broadcast"
         seq = self._next_seq()
         obj = {
             "username": username,
             "password": password,
             "peer_role": peer_role,
-            "register": register,
+            "recv_mode": recv_mode,
         }
         self._send_msgpack(obj, seq=seq, msg_type=MSG_CLIENT_LOGIN)
         if self._hb_th is None:
@@ -156,46 +156,18 @@ class RelayClient:
         self._send_msgpack({}, seq=seq, msg_type=MSG_CLIENT_HEARTBEAT)
         return seq
 
-    def send_unicast(self, dst_username: str, payload: bytes, *, dst_conn_id: int = 0) -> int:
+    def send_data(self, dst_username: str, payload: bytes) -> int:
         seq = self._next_seq()
         self._send_msgpack(
-            {
-                "mode": "unicast",
-                "dst_username": str(dst_username),
-                "dst_conn_id": int(dst_conn_id),
-                "payload": payload,
-            },
+            {"dst_username": str(dst_username), "payload": payload},
             seq=seq,
             msg_type=MSG_CLIENT_DATA,
         )
         return seq
 
-    def send_unicast_obj(self, dst_username: str, obj: Any, *, dst_conn_id: int = 0) -> int:
+    def send_data_obj(self, dst_username: str, obj: Any) -> int:
         payload = msgpack.packb(obj, use_bin_type=True)
-        return self.send_unicast(dst_username, payload, dst_conn_id=dst_conn_id)
-
-    def send_broadcast_to_user(self, dst_username: str, payload: bytes) -> int:
-        seq = self._next_seq()
-        self._send_msgpack(
-            {"mode": "broadcast", "dst_username": str(dst_username), "payload": payload},
-            seq=seq,
-            msg_type=MSG_CLIENT_DATA,
-        )
-        return seq
-
-    def send_round_robin_to_user(self, dst_username: str, payload: bytes, interval_ms: int = 0) -> int:
-        seq = self._next_seq()
-        self._send_msgpack(
-            {
-                "mode": "round_robin",
-                "dst_username": str(dst_username),
-                "interval_ms": int(interval_ms),
-                "payload": payload,
-            },
-            seq=seq,
-            msg_type=MSG_CLIENT_DATA,
-        )
-        return seq
+        return self.send_data(dst_username, payload)
 
     def control_list_users(self) -> int:
         seq = self._next_seq()
@@ -242,8 +214,6 @@ class RelayClient:
                 if mt == MSG_DELIVER:
                     pl, sc, dc, su, du = unpack_deliver_body(body_raw or b"")
                     d = Deliver(
-                        src_user_id=int(h.get("src_user_id", 0)),
-                        dst_user_id=int(h.get("dst_user_id", 0)),
                         seq=int(h.get("seq", 0)),
                         payload=pl,
                         src_conn_id=sc,

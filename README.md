@@ -1,60 +1,71 @@
-# asio-forwarder（对等 TCP 中继）
+# asio-forwarder
 
-`asio-forwarder` 是一个 **C++20 + Boost.Asio（协程）** 实现的 **对等（peer-to-peer）TCP 中继服务**：所有客户端连接同一业务端口，首帧 **`msg_type=1`（login）** 完成注册或登录后，通过 **`msg_type=2/3/4`**（心跳、控制、数据）与服务器交互。
+用 **C++20** 与 **Boost.Asio（协程）** 实现的 **TCP 对等中继**：多客户端连同一**业务端口**；通过 **MySQL** 校验 **IP 白名单**与**账号**；登录后按**目标登录名**互发**二进制载荷**（中继不解析内容）。
 
-协议：**v2 线格式（40B 小端 header）+ msgpack body**；服务器下行主要有：**200 DELIVER**、**201 SERVER_REPLY**、**202 KICK**。权威说明见 **`deliver/docs/protocol.md`**。
+## 交付形态
 
-## 仓库结构（交付 vs 本地）
+| 角色 | 交付物 |
+|------|--------|
+| 服务端 | 可执行文件 **`asio_forwarder`** + JSON **配置文件** + `schema.sql` |
+| 客户端 | 头文件目录 **`deliver/client/include/fwd/`** + 静态库 **`libasio_forwarder_sdk.a`**（实现为**单个** `forwarder_sdk.cpp`） |
+| 说明 | 本仓库仅保留四份说明：**本文**、`deliver/docs/protocol.md`（线协议）、`deliver/docs/delivery.md`（交付与 API 表）、`deliver/docs/performance.md`（性能与测试） |
 
-| 目录 | 含义 |
-|------|------|
-| **`deliver/`** | **交付包**源码树：`server/`（`main.cpp`、配置模板）、`client/`（`include/fwd/` + SDK 源）、`docs/`。详见 **`deliver/README.md`**。 |
-| **`local/`** | **本地**测试与联调：`tests/`、`tools/`、`examples/`；**依赖** `deliver/` 与 `build/`。详见 **`local/README.md`**。 |
-| **`build/`** | CMake 生成物（`asio_forwarder`、`libasio_forwarder_sdk.a`、`forwarder_cpp_smoke` 等）。 |
-| **`scripts/`** | `build.sh`、`run_dev.sh`、与 `local/tests/run_e2e.sh` 的兼容入口。 |
+集成 C++ 客户端时推荐**只包含** `fwd/forwarder_client.hpp`（对 `asio_forwarder_client` 的薄入口）。
 
-## 项目特征
-
-- **单端口对等接入**：`client.listen` 一处配置。
-- **用户与多连接**：每用户最多 **`session.max_connections_per_user`** 条 TCP（默认 8）。
-- **透明载荷**：不解析 **DATA** 的 `payload` 业务语义。
-- **稳定性保护**：限长、超时、心跳踢线、发送队列背压；踢线前尽量发 **202**。
-
-## 架构（简要）
-
-- 进程入口：`deliver/server/src/main.cpp`（与 SDK **共用** `deliver/client/include/fwd/*` 协议头）
-- 关键类型：**`RelayServer`**、**`TcpSession`**
-- 更多见 **`deliver/docs/architecture.md`**
-
-## 使用
-
-### 构建与回归
+## 构建
 
 ```bash
 ./scripts/build.sh
-cd build && ctest --output-on-failure
 ```
 
-### 开发运行
+依赖：Boost、msgpack-cxx（CMake 自动拉取）、**libmysqlclient**（仅编译服务端）。
+
+## 运行服务端
 
 ```bash
+./build/asio_forwarder deliver/server/forwarder.json
+```
+
+本机 MySQL 若要求密码而 JSON 里 `mysql.password` 为空，可：
+
+```bash
+export FORWARDER_MYSQL_PASSWORD='你的密码'
 ./scripts/run_dev.sh
 ```
 
-默认读 **`deliver/server/forwarder.json`**。端口以该文件为准（常见为 `0.0.0.0:19000` + `127.0.0.1:19003` admin）。
+`run_dev.sh` 仍启动 `build/asio_forwarder`；可用 `FORWARDER_CONFIG` 指向自建 JSON。
 
-## 文档导航
+## 回归与性能
 
-| 主题 | 位置 |
+- **端到端**（需本机 MySQL，脚本会建库 `forwarder_e2e` 并导入 `schema.sql` + `local/tests/seed_e2e.sql`）：
+
+  ```bash
+  cd build && ctest --output-on-failure
+  # 或
+  ./local/tests/run_e2e.sh
+  ```
+
+  通过时最后一行：`---- OK: e2e passed ----`。黑盒脚本已合并为 **`local/tests/e2e_forwarder.py`**。
+
+- **基本性能**（需已有中继与种子用户 `perf_src` / `perf_dst`）：
+
+  ```bash
+  ./build/forwarder_perf 127.0.0.1 业务端口 2000
+  ```
+
+  将终端输出填入 `deliver/docs/performance.md` 中表格。详见该文件。
+
+## 本机网页（非必交付）
+
+`local/tools/webui_server.py`：单页监控 + 浏览器侧 WebSocket 模拟终端；仅供联调。**刷新页面会丢失浏览器里的会话列表**——这是正常现象：真实连接在内存里，不落库；生产不使用该页则无需持久化「连接表」。
+
+与 C++ 可同时用：页面与业务代码都连**同一业务端口**，前提是 MySQL 白名单与账号允许。**第一次写 C++ 集成**可看带注释的示例：[`local/examples/first_use/first_use_client.cpp`](local/examples/first_use/first_use_client.cpp)（构建后 `./build/first_use_client HOST PORT`）；服务端与客户端「都能做什么」总表见 [`deliver/docs/delivery.md`](deliver/docs/delivery.md) 第 8 节。
+
+## 文档索引
+
+| 文档 | 内容 |
 |------|------|
-| 线协议 | `deliver/docs/protocol.md` |
-| 交付物清单 | `deliver/docs/delivery.md` |
-| 本地测试与联调 | `deliver/docs/local.md`（`deliver/docs/testing.md` 仅重定向至本页） |
-| 客户端 API | `deliver/docs/client_api.md` |
-| 架构 / 数据流 / 设计 | `deliver/docs/architecture.md` 等 |
-| 与旧版差异 | `deliver/docs/history.md` |
-
-## 重要提醒
-
-- **CONTROL** 仅 **`peer_role == admin`** 可用（见协议文档）。
-- **账户**在内存，**进程重启即丢失**。
+| [deliver/docs/protocol.md](deliver/docs/protocol.md) | 帧结构、登录/数据/管理、只读管理口 |
+| [deliver/docs/delivery.md](deliver/docs/delivery.md) | 目录、配置键、客户端 API 表、数据库表 |
+| [deliver/docs/performance.md](deliver/docs/performance.md) | 测试与性能记录方式 |
+| [local/README.md](local/README.md) | 仓库内 `local/` 脚本说明（非客户最小包） |

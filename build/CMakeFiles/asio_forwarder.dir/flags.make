@@ -4,7 +4,7 @@
 # compile CXX with /usr/bin/c++
 CXX_DEFINES = -DMSGPACK_DEFAULT_API_VERSION=3 -DMSGPACK_NO_BOOST
 
-CXX_INCLUDES = -I/home/xuanrui/asio-forwarder/deliver/client/include -I/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-src/include -I/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/include
+CXX_INCLUDES = -I/home/xuanrui/asio-forwarder/deliver/client/include -I/home/xuanrui/asio-forwarder/deliver/server/include -I/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-src/include -I/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/include
 
-CXX_FLAGS = -std=c++20 -Wall -Wextra -Wpedantic
+CXX_FLAGS = -O2 -g -DNDEBUG -std=c++20 -Wall -Wextra -Wpedantic
 

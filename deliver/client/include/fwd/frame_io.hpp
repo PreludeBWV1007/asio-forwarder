@@ -55,7 +55,7 @@ inline std::string pack_frame(proto::Header h, const std::string& body) {
   return wire;
 }
 
-// 从 fd 读一帧：校验 magic/version/header_len（40B v2），且 body_len <= max_body_len。
+// 从 fd 读一帧：校验 magic/version/header_len（24B v3），且 body_len <= max_body_len。
 inline std::optional<ParsedFrame> recv_frame(int fd, std::uint32_t max_body_len) {
   std::array<std::uint8_t, proto::Header::kHeaderLen> hb{};
   if (!recv_exact(fd, hb.data(), hb.size())) return std::nullopt;

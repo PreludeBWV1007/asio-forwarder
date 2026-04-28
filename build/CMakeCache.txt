@@ -22,7 +22,7 @@ CMAKE_AR:FILEPATH=/usr/bin/ar
 
 //Choose the type of build, options are: None Debug Release RelWithDebInfo
 // MinSizeRel ...
-CMAKE_BUILD_TYPE:STRING=
+CMAKE_BUILD_TYPE:STRING=RelWithDebInfo
 
 //Enable/Disable color output during build.
 CMAKE_COLOR_MAKEFILE:BOOL=ON
@@ -292,6 +292,12 @@ MSGPACK_USE_STD_VARIANT_ADAPTOR:BOOL=OFF
 
 //Use Boost X3 parse
 MSGPACK_USE_X3_PARSE:BOOL=OFF
+
+//Path to a file.
+MYSQL_INCLUDE_DIR:PATH=/usr/include
+
+//Path to a library.
+MYSQL_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libmysqlclient.so
 
 //Value Computed by CMake
 asio_forwarder_BINARY_DIR:STATIC=/home/xuanrui/asio-forwarder/build
