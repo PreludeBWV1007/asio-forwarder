@@ -85,6 +85,9 @@ class Client {
   [[nodiscard]] std::uint32_t control_list_users(bool wait_server_reply = true);
   [[nodiscard]] std::uint32_t control_kick_user(std::uint64_t target_user_id, bool wait_server_reply = true);
 
+  /** 管理员 CONTROL：body 为完整 msgpack map（须含 action）；返回服务端 201 正文的 unpack（含 ok/op 及自定义字段） */
+  [[nodiscard]] msgpack::object_handle control_request(const msgpack::sbuffer& control_body);
+
   static void log_deliver(const sdk::Deliver& d, std::ostream& os = std::cout);
   [[nodiscard]] sdk::RelayClient& raw();
 
@@ -94,6 +97,7 @@ class Client {
   std::deque<sdk::Event> in_order_;
   std::deque<sdk::Deliver> pre_delivers_;
   void drain_server_ack(std::uint32_t seq, const char* op);
+  sdk::ServerReply drain_control_full(std::uint32_t seq);
   void expect_heartbeat_ok(std::uint32_t seq);
 };
 

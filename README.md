@@ -1,6 +1,8 @@
 # asio-forwarder
 
-用 **C++20** 与 **Boost.Asio（协程）** 实现的 **TCP 对等中继**：多客户端连同一**业务端口**；通过 **MySQL** 校验 **IP 白名单**与**账号**；登录后按**目标登录名**互发**二进制载荷**（中继不解析内容）。
+基于**C++20**和**Boost.Asio** 实现的 **转发器**，实现多接入的二进制消息转发功能。
+
+工作流程：先新建连接，多客户端连同一**业务端口**；通过 **MySQL** 校验 **IP 白名单**与**账号**；登录后按**目标登录名**互发**二进制载荷**（中继不解析内容）。
 
 ## 交付形态
 
@@ -59,7 +61,7 @@ export FORWARDER_MYSQL_PASSWORD='你的密码'
 
 `local/tools/webui_server.py`：单页监控 + 浏览器侧 WebSocket 模拟终端；仅供联调。**刷新页面会丢失浏览器里的会话列表**——这是正常现象：真实连接在内存里，不落库；生产不使用该页则无需持久化「连接表」。
 
-与 C++ 可同时用：页面与业务代码都连**同一业务端口**，前提是 MySQL 白名单与账号允许。**第一次写 C++ 集成**可看带注释的示例：[`local/examples/first_use/first_use_client.cpp`](local/examples/first_use/first_use_client.cpp)（构建后 `./build/first_use_client HOST PORT`）；服务端与客户端「都能做什么」总表见 [`deliver/docs/delivery.md`](deliver/docs/delivery.md) 第 8 节。
+与 C++ 可同时用：页面与业务代码都连**同一业务端口**，前提是 MySQL 白名单与账号允许。**第一次写 C++ 集成**可看带注释的示例：[`local/examples/usage_instruction.cpp`](local/examples/usage_instruction.cpp)（构建后 `./build/usage_instruction HOST BIZ_PORT [ADMIN_HTTP_PORT]`）；服务端与客户端「都能做什么」总表见 [`deliver/docs/delivery.md`](deliver/docs/delivery.md) 第 8 节。
 
 ## 文档索引
 

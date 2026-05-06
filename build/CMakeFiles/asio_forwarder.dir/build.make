@@ -76,15 +76,15 @@ CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: CMakeFiles/asio_for
 CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp
 CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o: CMakeFiles/asio_forwarder.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/xuanrui/asio-forwarder/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building CXX object CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -MF CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o.d -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -c /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -MD -MT CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -MF CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o.d -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -c /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp
 
 CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing CXX source to CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp > CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -E /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp > CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.i
 
 CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling CXX source to assembly CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s"
-	/usr/bin/c++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
+	/usr/bin/g++ $(CXX_DEFINES) $(CXX_INCLUDES) $(CXX_FLAGS) -S /home/xuanrui/asio-forwarder/deliver/server/src/main.cpp -o CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
 
 # Object files for target asio_forwarder
 asio_forwarder_OBJECTS = \

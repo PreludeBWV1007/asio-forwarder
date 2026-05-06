@@ -211,17 +211,17 @@ forwarder_perf/fast:
 .PHONY : forwarder_perf/fast
 
 #=============================================================================
-# Target rules for targets named first_use_client
+# Target rules for targets named usage_instruction
 
 # Build rule for target.
-first_use_client: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 first_use_client
-.PHONY : first_use_client
+usage_instruction: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 usage_instruction
+.PHONY : usage_instruction
 
 # fast build rule for target.
-first_use_client/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/first_use_client.dir/build.make CMakeFiles/first_use_client.dir/build
-.PHONY : first_use_client/fast
+usage_instruction/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/build
+.PHONY : usage_instruction/fast
 
 deliver/client/src/forwarder_sdk.o: deliver/client/src/forwarder_sdk.cpp.o
 .PHONY : deliver/client/src/forwarder_sdk.o
@@ -271,29 +271,29 @@ deliver/server/src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
 .PHONY : deliver/server/src/main.cpp.s
 
-local/examples/first_use/first_use_client.o: local/examples/first_use/first_use_client.cpp.o
-.PHONY : local/examples/first_use/first_use_client.o
+local/examples/usage_instruction.o: local/examples/usage_instruction.cpp.o
+.PHONY : local/examples/usage_instruction.o
 
 # target to build an object file
-local/examples/first_use/first_use_client.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/first_use_client.dir/build.make CMakeFiles/first_use_client.dir/local/examples/first_use/first_use_client.cpp.o
-.PHONY : local/examples/first_use/first_use_client.cpp.o
+local/examples/usage_instruction.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.o
+.PHONY : local/examples/usage_instruction.cpp.o
 
-local/examples/first_use/first_use_client.i: local/examples/first_use/first_use_client.cpp.i
-.PHONY : local/examples/first_use/first_use_client.i
+local/examples/usage_instruction.i: local/examples/usage_instruction.cpp.i
+.PHONY : local/examples/usage_instruction.i
 
 # target to preprocess a source file
-local/examples/first_use/first_use_client.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/first_use_client.dir/build.make CMakeFiles/first_use_client.dir/local/examples/first_use/first_use_client.cpp.i
-.PHONY : local/examples/first_use/first_use_client.cpp.i
+local/examples/usage_instruction.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.i
+.PHONY : local/examples/usage_instruction.cpp.i
 
-local/examples/first_use/first_use_client.s: local/examples/first_use/first_use_client.cpp.s
-.PHONY : local/examples/first_use/first_use_client.s
+local/examples/usage_instruction.s: local/examples/usage_instruction.cpp.s
+.PHONY : local/examples/usage_instruction.s
 
 # target to generate assembly for a file
-local/examples/first_use/first_use_client.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/first_use_client.dir/build.make CMakeFiles/first_use_client.dir/local/examples/first_use/first_use_client.cpp.s
-.PHONY : local/examples/first_use/first_use_client.cpp.s
+local/examples/usage_instruction.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.s
+.PHONY : local/examples/usage_instruction.cpp.s
 
 local/tests/perf_basic.o: local/tests/perf_basic.cpp.o
 .PHONY : local/tests/perf_basic.o
@@ -334,17 +334,17 @@ help:
 	@echo "... test"
 	@echo "... asio_forwarder"
 	@echo "... asio_forwarder_sdk"
-	@echo "... first_use_client"
 	@echo "... forwarder_perf"
+	@echo "... usage_instruction"
 	@echo "... deliver/client/src/forwarder_sdk.o"
 	@echo "... deliver/client/src/forwarder_sdk.i"
 	@echo "... deliver/client/src/forwarder_sdk.s"
 	@echo "... deliver/server/src/main.o"
 	@echo "... deliver/server/src/main.i"
 	@echo "... deliver/server/src/main.s"
-	@echo "... local/examples/first_use/first_use_client.o"
-	@echo "... local/examples/first_use/first_use_client.i"
-	@echo "... local/examples/first_use/first_use_client.s"
+	@echo "... local/examples/usage_instruction.o"
+	@echo "... local/examples/usage_instruction.i"
+	@echo "... local/examples/usage_instruction.s"
 	@echo "... local/tests/perf_basic.o"
 	@echo "... local/tests/perf_basic.i"
 	@echo "... local/tests/perf_basic.s"

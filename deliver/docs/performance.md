@@ -15,7 +15,7 @@ cd build && ctest --output-on-failure
 ./local/tests/run_e2e.sh
 ```
 
-脚本会：起临时配置的 `asio_forwarder` → 跑 **`local/tests/e2e_forwarder.py`**（原 minimal + suite 合并）→ 可选 **`first_use_client`**（C++ 入门闭环）→ GET 管理口 `/api/health`。成功结尾：`---- OK: e2e passed ----`。
+脚本会：起临时配置的 `asio_forwarder` → 跑 **`local/tests/e2e_forwarder.py`**（原 minimal + suite 合并）→ 可选 **`usage_instruction`**（C++ SDK 合一示例：DATA、RecvMode、管理员 CONTROL 含库表 CRUD）→ GET 管理口 `/api/health`。成功结尾：`---- OK: e2e passed ----`。
 
 数据库：`forwarder_e2e`；表与种子见 `deliver/server/schema.sql`、`local/tests/seed_e2e.sql`。
 

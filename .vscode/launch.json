@@ -1,0 +1,59 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "调试 usage_instruction (CMake + 中继)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/usage_instruction",
+            "args": ["127.0.0.1", "19000"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "CMake: build usage_instruction",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
+            "name": "WSL: 调试当前 C++ 项目",
+            "type": "cppdbg",
+            "request": "launch",
+            // 编译生成的二进制文件路径
+            "program": "${fileDirname}/${fileBasenameNoExtension}",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            // 关键：启动调试前先运行 tasks.json 里的编译任务
+            "preLaunchTask": "WSL_Build_All_CPP",
+            "miDebuggerPath": "/usr/bin/gdb"
+        }
+    ]
+}

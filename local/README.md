@@ -6,7 +6,7 @@
 local/
 ├── tests/       # run_e2e.sh、e2e_forwarder.py、perf_basic.cpp、seed_e2e.sql
 ├── tools/       # forwarder_wire、relay_client（e2e/webui 依赖）、webui_server、app.html …
-└── examples/    # first_use（注释入门 C++）
+└── examples/    # usage_instruction.cpp（合一入门：DATA、RecvMode、管理员库表 CRUD）
 ```
 
 - **E2E**：`./local/tests/run_e2e.sh` 或 `cd build && ctest`。  

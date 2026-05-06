@@ -58,6 +58,7 @@ struct ServerReply {
   std::string op;      // LOGIN / HEARTBEAT / DATA / CONTROL (best-effort)
   std::string message; // ok=false 时服务端 message；或旧字段 error
   std::string raw;     // debug
+  std::string body_raw; // 完整 201 正文体（msgpack），便于解析自定义 CONTROL 回复字段
 };
 
 struct Kick {
@@ -92,6 +93,8 @@ class RelayClient {
   // CONTROL (admin only)
   std::uint32_t control_list_users();
   std::uint32_t control_kick_user(std::uint64_t target_user_id);
+  /** CONTROL 正文为已 pack 好的 msgpack map（须含 action 等键）；seq 由本函数分配 */
+  std::uint32_t control_send_raw(const msgpack::sbuffer& body);
 
   // Blocking receive one event. Returns std::nullopt if socket closed.
   std::optional<Event> recv();

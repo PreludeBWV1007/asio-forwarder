@@ -1,0 +1,58 @@
+{
+    // 【编译】
+    // 一个单独的项目，要整体编译运行，首先确保一个dir中有所需的依赖文件和main.cpp，然后建立一个CMakeLists.txt，写好编译规则，包含main.cpp，以及所有依赖的文件。
+    // 当前项目中创建子目录build，进入后：
+    //     1. cmake ..
+    //     2. make
+    //     3. 退回主目录，执行./main即可运行
+
+    // 【调试】
+    // tasks.json 定义了 VS Code 中的任务，而launch.json 定义了调试配置。preLaunchTask 的值必须与 tasks.json 中的 label 一致，才能在调试前自动执行编译任务。
+    // 下面的方案A和B分别代表了单文件级编译和项目级编译
+    // 方案A：当当前目录下有很多包含main函数的cpp文件，如果使用方案B的写法，会全部编译，导致无法找到那个唯一的main函数入口，因此，需要采用方案A的写法，如果有依赖的文件，在后面增加依赖的文件即可
+    // 方案B：一个项目的所有文件在一个文件夹中，有一个main函数入口，使用方案B，就可以在任意的文件中打断点，然后在main入口的地方开始编译，编译器会自动把当前文件夹下的所有cpp文件都编译了，这样就可以在任意的文件中打断点了
+    // 关于.vscode的位置，会优先使用最父级的文件夹中的，而非需要在每个子项目文件夹中再创建.vscode文件夹
+
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "WSL_Build_All_CPP", // 必须与 launch.json 中的 preLaunchTask 一致
+            "command": "/usr/bin/g++",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",                     // 生成调试信息，不加这个没法断点
+                // 方案 A：如果单文件练习，把下面这一行改为 "${file}"
+                // "${file}",
+
+                // 方案 B：如果你正在写多文件项目（如 StrVec），保持 "${fileDirname}/*.cpp"
+                "${fileDirname}/*.cpp",         // 核心：只编当前文件夹下的所有源文件
+                "-o",
+                "${fileDirname}/${fileBasenameNoExtension}",
+                "-std=c++20"              // C++20
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "使用 WSL 的 g++ 编译器并行编译"
+        },
+        {
+            "label": "CMake: build usage_instruction",
+            "type": "shell",
+            "command": "cmake --build build --target usage_instruction -j || (cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target usage_instruction -j)",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": ["$gcc"],
+            "group": "build",
+            "detail": "asio-forwarder：CMake 编 usage_instruction（含 SDK）"
+        }
+    ]
+}

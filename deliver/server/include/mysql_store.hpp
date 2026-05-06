@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct MYSQL;
 
@@ -32,8 +33,30 @@ class MysqlStore {
   // 白名单校验通过后调用：无则 INSERT，有则校验口令；want_admin 须与库中 is_admin 一致
   std::optional<std::string> authenticate_or_register(const std::string& username, const std::string& password,
                                                       bool want_admin, UserInfo& out);
-  // 为路由缓存：任用户名字 → id
+  // 任用户名字 → id
   std::optional<std::uint64_t> user_id_by_username(const std::string& username);
+
+  // 管理员 CONTROL：两张库的 CRUD（错误时返回人可读信息；成功返回 nullopt）
+  struct AdminIpRow {
+    std::uint64_t id{0};
+    std::string ip;
+  };
+  struct AdminUserRow {
+    std::uint64_t id{0};
+    std::string username;
+    bool is_admin{false};
+  };
+  std::optional<std::string> admin_list_allowlist(std::vector<AdminIpRow>& out);
+  std::optional<std::string> admin_insert_allowlist(const std::string& ip);
+  std::optional<std::string> admin_update_allowlist(std::uint64_t id, const std::string& ip);
+  std::optional<std::string> admin_delete_allowlist(std::uint64_t id);
+  std::optional<std::string> admin_list_users(std::vector<AdminUserRow>& out);
+  std::optional<std::string> admin_insert_user(const std::string& username, const std::string& password, bool is_admin);
+  // new_username / new_password 空指针表示不改该项；new_is_admin 空指针表示不改
+  std::optional<std::string> admin_update_user(std::uint64_t id, const std::string* new_username, const std::string* new_password,
+                                               const bool* new_is_admin);
+  std::optional<std::string> admin_delete_user(std::uint64_t id);
+  std::optional<std::string> admin_get_username_by_id(std::uint64_t id, std::string& out_name);
 
  private:
   std::mutex mu_{};

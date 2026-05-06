@@ -152,6 +152,12 @@ std::uint32_t RelayClient::control_kick_user(std::uint64_t target_user_id) {
   return s;
 }
 
+std::uint32_t RelayClient::control_send_raw(const msgpack::sbuffer& body) {
+  const std::uint32_t s = impl_->next_seq();
+  impl_->send_msgpack(relay::kClientControl, s, body);
+  return s;
+}
+
 static std::string msgpack_to_debug_string(const msgpack::object& o) {
   std::stringstream ss;
   ss << o;
@@ -244,6 +250,7 @@ std::optional<Event> RelayClient::recv() {
     if (h.msg_type == relay::kMsgServerReply) {
       ServerReply r;
       r.seq = h.seq;
+      r.body_raw = body;
       auto oh = msgpack::unpack(body.data(), body.size());
       msgpack::object obj = oh.get();
       r.raw = msgpack_to_debug_string(obj);
@@ -464,10 +471,10 @@ void Client::sign_on(std::string_view username, std::string_view password, RecvM
       throw std::runtime_error("sign_on: 登录阶段不应收到 DELIVER");
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
-      if (r->op == "LOGIN") {
-        if (!r->ok) throw std::runtime_error("sign_on: " + (r->message.empty() ? "error" : r->message));
-        return;
+      if (!r->ok) {
+        throw std::runtime_error("sign_on: " + (r->message.empty() ? "error" : r->message));
       }
+      if (r->op == "LOGIN") return;
       throw std::runtime_error("sign_on: 未预期的 201: op=" + r->op);
     }
   }
@@ -505,6 +512,43 @@ void Client::drain_server_ack(std::uint32_t seq, const char* op) {
       throw std::runtime_error(std::string("等待 ") + op + " 时先收到不匹配的 201: seq=" + std::to_string(r->seq) + " op=" + r->op);
     }
   }
+}
+
+fwd::sdk::ServerReply Client::drain_control_full(std::uint32_t seq) {
+  for (;;) {
+    if (in_order_.empty()) {
+      auto ev = client_.recv();
+      if (!ev) throw std::runtime_error("CONTROL: EOF");
+      in_order_.push_back(std::move(*ev));
+    }
+    auto e = std::move(in_order_.front());
+    in_order_.pop_front();
+    if (const auto* k = std::get_if<fwd::sdk::Kick>(&e)) {
+      throw std::runtime_error(std::string("KICK ") + k->reason);
+    }
+    if (auto* d = std::get_if<fwd::sdk::Deliver>(&e)) {
+      pre_delivers_.push_back(std::move(*d));
+      continue;
+    }
+    if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
+      if (r->seq != seq) {
+        throw std::runtime_error("CONTROL: 未预期的 201 seq=" + std::to_string(r->seq));
+      }
+      if (!r->ok) {
+        throw std::runtime_error(std::string("CONTROL 未受理: ") + (r->message.empty() ? "?" : r->message));
+      }
+      if (r->op != "CONTROL") {
+        throw std::runtime_error("CONTROL: op 不符: " + r->op);
+      }
+      return *r;
+    }
+  }
+}
+
+msgpack::object_handle Client::control_request(const msgpack::sbuffer& control_body) {
+  const std::uint32_t s = client_.control_send_raw(control_body);
+  const auto rep = drain_control_full(s);
+  return msgpack::unpack(rep.body_raw.data(), rep.body_raw.size());
 }
 
 void Client::expect_heartbeat_ok(std::uint32_t seq) {

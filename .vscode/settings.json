@@ -1,0 +1,6 @@
+{
+  "code-runner.runInTerminal": true,
+  "code-runner.executorMapByGlob": {
+    "usage_instruction.cpp": "cd \"$dir/../../..\" && (cmake --build build --target usage_instruction -j || ./scripts/build.sh) && ./build/usage_instruction 127.0.0.1 19000 19003"
+  }
+}

@@ -797,6 +797,20 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     return std::nullopt;
   }
 
+  bool map_has_key(const msgpack::object_map& m, const char* key) {
+    for (std::uint32_t i = 0; i < m.size; ++i) {
+      if (m.ptr[i].key.type != msgpack::type::STR) continue;
+      std::string k;
+      try {
+        m.ptr[i].key.convert(k);
+      } catch (...) {
+        continue;
+      }
+      if (k == key) return true;
+    }
+    return false;
+  }
+
   std::optional<std::uint64_t> map_get_u64(const msgpack::object_map& m, const char* key) {
     for (std::uint32_t i = 0; i < m.size; ++i) {
       if (m.ptr[i].key.type != msgpack::type::STR) continue;
@@ -1027,6 +1041,18 @@ class RelayServer : public std::enable_shared_from_this<RelayServer> {
     }
   }
 
+  void admin_kick_uid_sessions(std::uint64_t uid, const std::string& user_reason, const std::string& log_tag) {
+    std::vector<std::shared_ptr<TcpSession>> victims;
+    {
+      std::lock_guard lk(mu_);
+      auto it = user_deque_.find(uid);
+      if (it != user_deque_.end()) victims.assign(it->second.begin(), it->second.end());
+    }
+    for (const auto& v : victims) {
+      if (v) notify_and_close(v, user_reason, log_tag);
+    }
+  }
+
   boost::asio::io_context& io_;
   Config cfg_;
   tcp::acceptor client_acceptor_;
@@ -1102,6 +1128,11 @@ awaitable<void> TcpSession::read_loop(std::shared_ptr<RelayServer> hub) {
   co_return;
 }
 
+// GCC：Boost.Asio awaitable 协程帧的分配方式会触发 -Wmismatched-new-delete 误报（协程结束时析构帧）。
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> from, const proto::Header& wire_h,
                                                 std::string body) {
   const std::uint32_t mtype = wire_h.msg_type;
@@ -1295,6 +1326,235 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
       send_reply(from, buf, wire_h.seq);
       co_return;
     }
+    if (action == "allowlist_list") {
+      std::vector<fwd::db::MysqlStore::AdminIpRow> rows;
+      if (const auto err = db_.admin_list_allowlist(rows)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(3);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      pk.pack("rows");
+      pk.pack_array(rows.size());
+      for (const auto& r : rows) {
+        pk.pack_map(2);
+        pk.pack("id");
+        pk.pack(r.id);
+        pk.pack("ip");
+        pk.pack(r.ip);
+      }
+      send_reply(from, buf, wire_h.seq);
+      push_event(fwd::log::Level::kInfo, "admin allowlist_list by " + from->username());
+      co_return;
+    }
+    if (action == "allowlist_add") {
+      const auto ip = map_get_str(mp, "ip");
+      if (!ip || ip->empty()) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("allowlist_add 需要 ip"));
+        co_return;
+      }
+      if (const auto err = db_.admin_insert_allowlist(*ip)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      push_event(fwd::log::Level::kInfo, "admin allowlist_add ip=" + *ip + " by " + from->username());
+      co_return;
+    }
+    if (action == "allowlist_update") {
+      const auto rid = map_get_u64(mp, "id");
+      const auto ip = map_get_str(mp, "ip");
+      if (!rid || !ip) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("allowlist_update 需要 id 与 ip"));
+        co_return;
+      }
+      if (const auto err = db_.admin_update_allowlist(*rid, *ip)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      co_return;
+    }
+    if (action == "allowlist_delete") {
+      const auto rid = map_get_u64(mp, "id");
+      if (!rid) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("allowlist_delete 需要 id"));
+        co_return;
+      }
+      if (const auto err = db_.admin_delete_allowlist(*rid)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      co_return;
+    }
+    if (action == "user_table_list") {
+      std::vector<fwd::db::MysqlStore::AdminUserRow> rows;
+      if (const auto err = db_.admin_list_users(rows)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(3);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      pk.pack("rows");
+      pk.pack_array(rows.size());
+      for (const auto& r : rows) {
+        pk.pack_map(3);
+        pk.pack("id");
+        pk.pack(r.id);
+        pk.pack("username");
+        pk.pack(r.username);
+        pk.pack("is_admin");
+        pk.pack(r.is_admin);
+      }
+      send_reply(from, buf, wire_h.seq);
+      co_return;
+    }
+    if (action == "user_table_add") {
+      const auto un = map_get_str(mp, "username");
+      const auto pw = map_get_str(mp, "password");
+      if (!un || !pw || un->empty() || pw->empty()) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("user_table_add 需要 username/password"));
+        co_return;
+      }
+      const bool adm = map_get_bool(mp, "is_admin", false);
+      if (const auto err = db_.admin_insert_user(*un, *pw, adm)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      push_event(fwd::log::Level::kInfo, "admin user_table_add " + *un + " by " + from->username());
+      co_return;
+    }
+    if (action == "user_table_update") {
+      const auto uid = map_get_u64(mp, "id");
+      if (!uid) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("user_table_update 需要 id"));
+        co_return;
+      }
+      std::string old_un;
+      if (const auto err = db_.admin_get_username_by_id(*uid, old_un)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      const std::string* nu_ptr = nullptr;
+      std::string nu_store;
+      if (map_has_key(mp, "username")) {
+        const auto v = map_get_str(mp, "username");
+        if (!v) {
+          send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("username 非法"));
+          co_return;
+        }
+        nu_store = *v;
+        nu_ptr = &nu_store;
+      }
+      const std::string* pw_ptr = nullptr;
+      std::string pw_store;
+      if (map_has_key(mp, "password")) {
+        const auto v = map_get_str(mp, "password");
+        if (!v) {
+          send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("password 非法"));
+          co_return;
+        }
+        pw_store = *v;
+        pw_ptr = &pw_store;
+      }
+      const bool* ia_ptr = nullptr;
+      bool ia_store = false;
+      if (map_has_key(mp, "is_admin")) {
+        ia_store = map_get_bool(mp, "is_admin", false);
+        ia_ptr = &ia_store;
+      }
+      if (const auto err = db_.admin_update_user(*uid, nu_ptr, pw_ptr, ia_ptr)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      if (nu_ptr) {
+        std::lock_guard lk(mu_);
+        name_to_uid_.erase(old_un);
+        name_to_uid_[*nu_ptr] = *uid;
+        uid_to_username_[*uid] = *nu_ptr;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      co_return;
+    }
+    if (action == "user_table_delete") {
+      const auto uid = map_get_u64(mp, "id");
+      if (!uid) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("user_table_delete 需要 id"));
+        co_return;
+      }
+      std::string uname;
+      if (const auto err = db_.admin_get_username_by_id(*uid, uname)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      admin_kick_uid_sessions(*uid, "管理员从库中删除该账号", "user_table_delete");
+      {
+        std::lock_guard lk(mu_);
+        name_to_uid_.erase(uname);
+        uid_to_username_.erase(*uid);
+      }
+      if (const auto err = db_.admin_delete_user(*uid)) {
+        send_err_reply(from, wire_h.seq, relay::errc::kProtocol, *err);
+        co_return;
+      }
+      msgpack::sbuffer buf;
+      msgpack::packer<msgpack::sbuffer> pk(&buf);
+      pk.pack_map(2);
+      pk.pack("ok");
+      pk.pack(true);
+      pk.pack("op");
+      pk.pack("CONTROL");
+      send_reply(from, buf, wire_h.seq);
+      push_event(fwd::log::Level::kInfo, "admin user_table_delete id=" + std::to_string(*uid) + " by " + from->username());
+      co_return;
+    }
     send_err_reply(from, wire_h.seq, relay::errc::kProtocol, std::string("unknown action"));
     co_return;
   }
@@ -1304,6 +1564,9 @@ awaitable<void> RelayServer::handle_client_frame(std::shared_ptr<TcpSession> fro
   co_return;
 }
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }  // namespace fwd
 
 namespace fwd::db {
@@ -1536,6 +1799,370 @@ std::optional<std::uint64_t> MysqlStore::user_id_by_username(const std::string& 
   mysql_stmt_close(st);
   if (n0) return std::nullopt;
   return static_cast<std::uint64_t>(idv);
+}
+
+std::optional<std::string> MysqlStore::admin_list_allowlist(std::vector<AdminIpRow>& out) {
+  std::lock_guard lk(mu_);
+  out.clear();
+  if (!conn_) return std::string("数据库未连接");
+  const char q[] = "SELECT id, ip FROM ip_allowlist ORDER BY id ASC";
+  if (mysql_real_query(conn_, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) return std::string(mysql_error(conn_));
+  MYSQL_RES* res = mysql_store_result(conn_);
+  if (!res) return std::string(mysql_error(conn_));
+  MYSQL_ROW row;
+  while ((row = mysql_fetch_row(res)) != nullptr) {
+    if (!row[0] || !row[1]) continue;
+    AdminIpRow r;
+    try {
+      r.id = std::stoull(row[0]);
+    } catch (...) {
+      continue;
+    }
+    r.ip = row[1];
+    out.push_back(std::move(r));
+  }
+  mysql_free_result(res);
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_insert_allowlist(const std::string& ip) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "INSERT INTO ip_allowlist (ip) VALUES (?)";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  char buf[256]{};
+  const unsigned long plen = static_cast<unsigned long>(std::min(ip.size(), sizeof(buf) - 1));
+  std::memcpy(buf, ip.data(), plen);
+  MYSQL_BIND bind{};
+  unsigned long len = plen;
+  bind.buffer_type = MYSQL_TYPE_STRING;
+  bind.buffer = buf;
+  bind.buffer_length = sizeof(buf);
+  bind.length = &len;
+  if (mysql_stmt_bind_param(st, &bind) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    if (e.find("Duplicate") != std::string::npos || e.find("1062") != std::string::npos) return std::string("IP 已存在");
+    return e;
+  }
+  mysql_stmt_close(st);
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_update_allowlist(std::uint64_t id, const std::string& ip) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "UPDATE ip_allowlist SET ip = ? WHERE id = ?";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  char buf[256]{};
+  const unsigned long plen = static_cast<unsigned long>(std::min(ip.size(), sizeof(buf) - 1));
+  std::memcpy(buf, ip.data(), plen);
+  MYSQL_BIND b[2]{};
+  unsigned long l0 = plen;
+  b[0].buffer_type = MYSQL_TYPE_STRING;
+  b[0].buffer = buf;
+  b[0].buffer_length = sizeof(buf);
+  b[0].length = &l0;
+  b[1].buffer_type = MYSQL_TYPE_LONGLONG;
+  b[1].buffer = &id;
+  b[1].is_unsigned = true;
+  if (mysql_stmt_bind_param(st, b) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    if (e.find("Duplicate") != std::string::npos || e.find("1062") != std::string::npos) return std::string("IP 与已有记录冲突");
+    return e;
+  }
+  const auto aff = mysql_stmt_affected_rows(st);
+  mysql_stmt_close(st);
+  if (aff == 0) return std::string("无此 id");
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_delete_allowlist(std::uint64_t id) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "DELETE FROM ip_allowlist WHERE id = ?";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  MYSQL_BIND b{};
+  b.buffer_type = MYSQL_TYPE_LONGLONG;
+  b.buffer = &id;
+  b.is_unsigned = true;
+  if (mysql_stmt_bind_param(st, &b) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  const auto aff = mysql_stmt_affected_rows(st);
+  mysql_stmt_close(st);
+  if (aff == 0) return std::string("无此 id");
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_list_users(std::vector<AdminUserRow>& out) {
+  std::lock_guard lk(mu_);
+  out.clear();
+  if (!conn_) return std::string("数据库未连接");
+  const char q[] = "SELECT id, username, is_admin FROM users ORDER BY id ASC";
+  if (mysql_real_query(conn_, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) return std::string(mysql_error(conn_));
+  MYSQL_RES* res = mysql_store_result(conn_);
+  if (!res) return std::string(mysql_error(conn_));
+  MYSQL_ROW row;
+  while ((row = mysql_fetch_row(res)) != nullptr) {
+    if (!row[0] || !row[1] || !row[2]) continue;
+    AdminUserRow r;
+    try {
+      r.id = std::stoull(row[0]);
+    } catch (...) {
+      continue;
+    }
+    r.username = row[1];
+    r.is_admin = (std::strcmp(row[2], "1") == 0);
+    out.push_back(std::move(r));
+  }
+  mysql_free_result(res);
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_insert_user(const std::string& username, const std::string& password, bool is_admin) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  char un[512]{};
+  char pw[4096]{};
+  const unsigned long ulen = static_cast<unsigned long>(std::min(username.size(), sizeof(un) - 1));
+  const unsigned long plen = static_cast<unsigned long>(std::min(password.size(), sizeof(pw) - 1));
+  std::memcpy(un, username.data(), ulen);
+  std::memcpy(pw, password.data(), plen);
+  MYSQL_BIND b[3]{};
+  unsigned long l0 = ulen, l1 = plen;
+  b[0].buffer_type = MYSQL_TYPE_STRING;
+  b[0].buffer = un;
+  b[0].buffer_length = sizeof(un);
+  b[0].length = &l0;
+  b[1].buffer_type = MYSQL_TYPE_STRING;
+  b[1].buffer = pw;
+  b[1].buffer_length = sizeof(pw);
+  b[1].length = &l1;
+  int8_t adm = static_cast<int8_t>(is_admin ? 1 : 0);
+  b[2].buffer_type = MYSQL_TYPE_TINY;
+  b[2].buffer = &adm;
+  if (mysql_stmt_bind_param(st, b) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    if (e.find("Duplicate") != std::string::npos || e.find("1062") != std::string::npos) return std::string("用户名已存在");
+    return e;
+  }
+  mysql_stmt_close(st);
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_update_user(std::uint64_t id, const std::string* new_username, const std::string* new_password,
+                                                         const bool* new_is_admin) {
+  if (!new_username && !new_password && !new_is_admin) return std::string("无字段可更新");
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  auto run_one = [&](const char* sql, auto&& bind_fn) -> std::optional<std::string> {
+    MYSQL_STMT* st = mysql_stmt_init(conn_);
+    if (!st) return std::string("mysql_stmt_init");
+    if (mysql_stmt_prepare(st, sql, static_cast<unsigned long>(std::strlen(sql))) != 0) {
+      std::string e = mysql_stmt_error(st);
+      mysql_stmt_close(st);
+      return e;
+    }
+    if (bind_fn(st) != 0) {
+      mysql_stmt_close(st);
+      return std::string("bind");
+    }
+    if (mysql_stmt_execute(st) != 0) {
+      std::string e = mysql_stmt_error(st);
+      mysql_stmt_close(st);
+      if (e.find("Duplicate") != std::string::npos || e.find("1062") != std::string::npos) return std::string("用户名冲突");
+      return e;
+    }
+    if (mysql_stmt_affected_rows(st) == 0) {
+      mysql_stmt_close(st);
+      return std::string("无此 id");
+    }
+    mysql_stmt_close(st);
+    return std::nullopt;
+  };
+  if (new_username) {
+    static const char q[] = "UPDATE users SET username = ? WHERE id = ?";
+    char un[512]{};
+    const unsigned long ulen = static_cast<unsigned long>(std::min(new_username->size(), sizeof(un) - 1));
+    std::memcpy(un, new_username->data(), ulen);
+    unsigned long l0 = ulen;
+    std::uint64_t idc = id;
+    if (const auto e =
+            run_one(q, [&](MYSQL_STMT* st) {
+              MYSQL_BIND b[2]{};
+              b[0].buffer_type = MYSQL_TYPE_STRING;
+              b[0].buffer = un;
+              b[0].buffer_length = sizeof(un);
+              b[0].length = &l0;
+              b[1].buffer_type = MYSQL_TYPE_LONGLONG;
+              b[1].buffer = &idc;
+              b[1].is_unsigned = true;
+              return mysql_stmt_bind_param(st, b);
+            })) {
+      return e;
+    }
+  }
+  if (new_password) {
+    static const char q[] = "UPDATE users SET password = ? WHERE id = ?";
+    char pw[4096]{};
+    const unsigned long plen = static_cast<unsigned long>(std::min(new_password->size(), sizeof(pw) - 1));
+    std::memcpy(pw, new_password->data(), plen);
+    unsigned long l1 = plen;
+    std::uint64_t idc = id;
+    if (const auto e =
+            run_one(q, [&](MYSQL_STMT* st) {
+              MYSQL_BIND b[2]{};
+              b[0].buffer_type = MYSQL_TYPE_STRING;
+              b[0].buffer = pw;
+              b[0].buffer_length = sizeof(pw);
+              b[0].length = &l1;
+              b[1].buffer_type = MYSQL_TYPE_LONGLONG;
+              b[1].buffer = &idc;
+              b[1].is_unsigned = true;
+              return mysql_stmt_bind_param(st, b);
+            })) {
+      return e;
+    }
+  }
+  if (new_is_admin) {
+    static const char q[] = "UPDATE users SET is_admin = ? WHERE id = ?";
+    int8_t adm = static_cast<int8_t>(*new_is_admin ? 1 : 0);
+    std::uint64_t idc = id;
+    if (const auto e = run_one(q, [&](MYSQL_STMT* st) {
+          MYSQL_BIND b[2]{};
+          b[0].buffer_type = MYSQL_TYPE_TINY;
+          b[0].buffer = &adm;
+          b[1].buffer_type = MYSQL_TYPE_LONGLONG;
+          b[1].buffer = &idc;
+          b[1].is_unsigned = true;
+          return mysql_stmt_bind_param(st, b);
+        })) {
+      return e;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_delete_user(std::uint64_t id) {
+  std::lock_guard lk(mu_);
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "DELETE FROM users WHERE id = ?";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  MYSQL_BIND b{};
+  b.buffer_type = MYSQL_TYPE_LONGLONG;
+  b.buffer = &id;
+  b.is_unsigned = true;
+  if (mysql_stmt_bind_param(st, &b) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  const auto aff = mysql_stmt_affected_rows(st);
+  mysql_stmt_close(st);
+  if (aff == 0) return std::string("无此 id");
+  return std::nullopt;
+}
+
+std::optional<std::string> MysqlStore::admin_get_username_by_id(std::uint64_t id, std::string& out_name) {
+  std::lock_guard lk(mu_);
+  out_name.clear();
+  if (!conn_) return std::string("数据库未连接");
+  MYSQL_STMT* st = mysql_stmt_init(conn_);
+  if (!st) return std::string("mysql_stmt_init");
+  static const char q[] = "SELECT username FROM users WHERE id = ? LIMIT 1";
+  if (mysql_stmt_prepare(st, q, static_cast<unsigned long>(sizeof(q) - 1)) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  MYSQL_BIND pb{};
+  pb.buffer_type = MYSQL_TYPE_LONGLONG;
+  pb.buffer = &id;
+  pb.is_unsigned = true;
+  if (mysql_stmt_bind_param(st, &pb) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind");
+  }
+  char un[512]{};
+  unsigned long ulen = 0;
+  MYSQL_BIND rb{};
+  rb.buffer_type = MYSQL_TYPE_STRING;
+  rb.buffer = un;
+  rb.buffer_length = sizeof(un);
+  rb.length = &ulen;
+  if (mysql_stmt_bind_result(st, &rb) != 0) {
+    mysql_stmt_close(st);
+    return std::string("bind result");
+  }
+  if (mysql_stmt_execute(st) != 0) {
+    std::string e = mysql_stmt_error(st);
+    mysql_stmt_close(st);
+    return e;
+  }
+  if (mysql_stmt_fetch(st) != 0) {
+    mysql_stmt_close(st);
+    return std::string("无此用户");
+  }
+  out_name.assign(un, ulen);
+  mysql_stmt_close(st);
+  return std::nullopt;
 }
 
 }  // namespace fwd::db

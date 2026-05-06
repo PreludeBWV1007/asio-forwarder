@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 黑盒一体化：临时端口起 asio_forwarder → e2e_forwarder.py →（可选）first_use_client → admin /api/health
+# 黑盒一体化：临时端口起 asio_forwarder → e2e_forwarder.py →（可选）usage_instruction → admin /api/health
 # 本脚本位于 local/tests/，依赖 deliver/ 的已构建 asio_forwarder 与头文件；Python 依赖 local/tools（PYTHONPATH）
 set -euo pipefail
 
@@ -106,11 +106,11 @@ echo "---- e2e: client=$E2E_CLIENT admin=$E2E_ADMIN ----"
 export PYTHONPATH="$ROOT/local/tools"
 python3 "$ROOT/local/tests/e2e_forwarder.py" 127.0.0.1 "$E2E_CLIENT"
 
-if [[ -x "$ROOT/build/first_use_client" ]]; then
-  echo "---- first_use_client (C++ SDK 入门闭环) ----"
-  "$ROOT/build/first_use_client" 127.0.0.1 "$E2E_CLIENT"
+if [[ -x "$ROOT/build/usage_instruction" ]]; then
+  echo "---- usage_instruction (C++ SDK 合一示例) ----"
+  "$ROOT/build/usage_instruction" 127.0.0.1 "$E2E_CLIENT"
 else
-  echo "---- skip first_use_client (rebuild with ./scripts/build.sh) ----"
+  echo "---- skip usage_instruction (rebuild with ./scripts/build.sh) ----"
 fi
 
 echo "---- admin /api/health ----"
