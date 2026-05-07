@@ -2,42 +2,57 @@
 
 基于**C++20**和**Boost.Asio** 实现的 **转发器**，实现多接入的二进制消息转发功能。
 
-工作流程：先新建连接，多客户端连同一**业务端口**；通过 **MySQL** 校验 **IP 白名单**与**账号**；登录后按**目标登录名**互发**二进制载荷**（中继不解析内容）。
+## 使用步骤
 
-## 交付形态
-
-| 角色 | 交付物 |
-|------|--------|
-| 服务端 | 可执行文件 **`asio_forwarder`** + JSON **配置文件** + `schema.sql` |
-| 客户端 | 头文件目录 **`deliver/client/include/fwd/`** + 静态库 **`libasio_forwarder_sdk.a`**（实现为**单个** `forwarder_sdk.cpp`） |
-| 说明 | 本仓库仅保留四份说明：**本文**、`deliver/docs/protocol.md`（线协议）、`deliver/docs/delivery.md`（交付与 API 表）、`deliver/docs/performance.md`（性能与测试） |
-
-集成 C++ 客户端时推荐**只包含** `fwd/forwarder_client.hpp`（对 `asio_forwarder_client` 的薄入口）。
-
-## 构建
-
+### 环境准备
+- `基础依赖`：CMake、C++20编译器、Boost、libmysqlclient、Python3
+- `Mysql`：启动，且能用TCP连上（127.0.0.1：3306）。默认配置里库名是 forwarder_e2e，用户 root，密码示例 e2etest（见 deliver/server/forwarder.json）。若你本机不同，后面启动时要用 FORWARDER_MYSQL_PASSWORD 或改自己的 JSON。
 ```bash
 ./scripts/build.sh
 ```
+成功后会有 build/asio_forwarder、build/usage_instruction 及 SDK 静态库等。
 
-依赖：Boost、msgpack-cxx（CMake 自动拉取）、**libmysqlclient**（仅编译服务端）。
+- `准备数据库`：在能连 MySQL 的前提下执行：
+```bash
+export MYSQL_PWD='e2etest'   # 若 root 无密码可省略或设空
+mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp -e "CREATE DATABASE IF NOT EXISTS forwarder_e2e"
+mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp forwarder_e2e < deliver/server/schema.sql
+mysql -h 127.0.0.1 -P 3306 -u root --protocol=tcp forwarder_e2e < local/tests/seed_e2e.sql
+```
+seed_e2e.sql 里有 e2e 账号、白名单等。
 
-## 运行服务端
+### 服务端
+- `业务TCP端口`：19000
+- `管理HTTP`：127.0.0.1:19003
+- `配置`：deliver/server/forwarder.json。需要保证mysql密码更新到JSON中最新
 
 ```bash
 ./build/asio_forwarder deliver/server/forwarder.json
 ```
 
-本机 MySQL 若要求密码而 JSON 里 `mysql.password` 为空，可：
+### 客户端
+- `基础`：持有：头文件目录 **`deliver/client/include/fwd/`** + 静态库 **`libasio_forwarder_sdk.a`**
+- `使用`：功能汇总和实现详情见：[deliver/docs/usage.md](deliver/docs/usage.md)
 
+运行测试：
 ```bash
-export FORWARDER_MYSQL_PASSWORD='你的密码'
-./scripts/run_dev.sh
+./build/usage_instruction 127.0.0.1 19000 19003
 ```
 
-`run_dev.sh` 仍启动 `build/asio_forwarder`；可用 `FORWARDER_CONFIG` 指向自建 JSON。
+### 本地Web端
+本地Web端更多服务于测试和调试，需要在同一台主机下，同时有服务端和客户端的运行基础，本地开设不同端口来模拟多客户端的多连接。**刷新页面会丢失浏览器里的会话列表**——这是正常现象：真实连接在内存里，不落库。
 
-## 回归与性能
+- `安装Web依赖`：
+```bash
+pip install -r local/tools/requirements-relay.txt -r local/tools/requirements-webui.txt pymysql
+```
+- `启动Web UI`：
+```bash
+PYTHONPATH=local/tools python3 local/tools/webui_server.py
+```
+- `浏览器打开`：http://127.0.0.1:8080
+
+### 性能测试
 
 - **端到端**（需本机 MySQL，脚本会建库 `forwarder_e2e` 并导入 `schema.sql` + `local/tests/seed_e2e.sql`）：
 
@@ -57,13 +72,7 @@ export FORWARDER_MYSQL_PASSWORD='你的密码'
 
   将终端输出填入 `deliver/docs/performance.md` 中表格。详见该文件。
 
-## 本机网页（非必交付）
-
-`local/tools/webui_server.py`：单页监控 + 浏览器侧 WebSocket 模拟终端；仅供联调。**刷新页面会丢失浏览器里的会话列表**——这是正常现象：真实连接在内存里，不落库；生产不使用该页则无需持久化「连接表」。
-
-与 C++ 可同时用：页面与业务代码都连**同一业务端口**，前提是 MySQL 白名单与账号允许。**第一次写 C++ 集成**可看带注释的示例：[`local/examples/usage_instruction.cpp`](local/examples/usage_instruction.cpp)（构建后 `./build/usage_instruction HOST BIZ_PORT [ADMIN_HTTP_PORT]`）；服务端与客户端「都能做什么」总表见 [`deliver/docs/delivery.md`](deliver/docs/delivery.md) 第 8 节。
-
-## 文档索引
+### 支持文档
 
 | 文档 | 内容 |
 |------|------|
@@ -71,3 +80,13 @@ export FORWARDER_MYSQL_PASSWORD='你的密码'
 | [deliver/docs/delivery.md](deliver/docs/delivery.md) | 目录、配置键、客户端 API 表、数据库表 |
 | [deliver/docs/performance.md](deliver/docs/performance.md) | 测试与性能记录方式 |
 | [local/README.md](local/README.md) | 仓库内 `local/` 脚本说明（非客户最小包） |
+
+### 交付形态
+
+| 角色 | 交付物 |
+|------|--------|
+| 服务端 | 可执行文件 **`asio_forwarder`** + JSON **配置文件** + `schema.sql` |
+| 客户端 | 头文件目录 **`deliver/client/include/fwd/`** + 静态库 **`libasio_forwarder_sdk.a`**（实现为**单个** `forwarder_sdk.cpp`） |
+| 说明 | 本仓库仅保留四份说明：**本文**、`deliver/docs/protocol.md`（线协议）、`deliver/docs/delivery.md`（交付与 API 表）、`deliver/docs/performance.md`（性能与测试） |
+
+集成 C++ 客户端时推荐**只包含** `fwd/forwarder_client.hpp`（对 `asio_forwarder_client` 的薄入口）。
