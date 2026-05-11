@@ -46,18 +46,10 @@ target_compile_options(asio_forwarder_sdk PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(asio_forwarder_sdk PUBLIC pthread boost_system msgpack-cxx)
 target_compile_definitions(asio_forwarder_sdk PUBLIC MSGPACK_NO_BOOST)
 
-enable_testing()
-add_test(
-  NAME e2e_forwarder
-  COMMAND "${LOCAL_ROOT}/tests/run_e2e.sh"
-  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-)
-set_tests_properties(e2e_forwarder PROPERTIES TIMEOUT 300)
+add_executable(test_admin "${LOCAL_ROOT}/tests/test_admin.cpp")
+target_link_libraries(test_admin PRIVATE asio_forwarder_sdk)
+target_include_directories(test_admin PRIVATE "${DELIVER_ROOT}/client/include")
 
-add_executable(forwarder_perf "${LOCAL_ROOT}/tests/perf_basic.cpp")
-target_link_libraries(forwarder_perf PRIVATE asio_forwarder_sdk)
-target_include_directories(forwarder_perf PRIVATE "${DELIVER_ROOT}/client/include")
-
-add_executable(usage_instruction "${LOCAL_ROOT}/examples/usage_instruction.cpp")
-target_link_libraries(usage_instruction PRIVATE asio_forwarder_sdk)
-target_include_directories(usage_instruction PRIVATE "${DELIVER_ROOT}/client/include")
+add_executable(test_user "${LOCAL_ROOT}/tests/test_user.cpp")
+target_link_libraries(test_user PRIVATE asio_forwarder_sdk)
+target_include_directories(test_user PRIVATE "${DELIVER_ROOT}/client/include")

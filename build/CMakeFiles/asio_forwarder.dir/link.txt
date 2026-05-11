@@ -1,1 +1,1 @@
-/usr/bin/g++ -O2 -g -DNDEBUG CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -o asio_forwarder  -lpthread -lboost_system /usr/lib/x86_64-linux-gnu/libmysqlclient.so
+/usr/bin/g++ -g CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.o -o asio_forwarder  -lpthread -lboost_system /usr/lib/x86_64-linux-gnu/libmysqlclient.so

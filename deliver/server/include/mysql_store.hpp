@@ -30,7 +30,7 @@ class MysqlStore {
     std::uint64_t id{0};
     bool is_admin{false};
   };
-  // 白名单校验通过后调用：无则 INSERT，有则校验口令；want_admin 须与库中 is_admin 一致
+  // 白名单校验通过后调用：库中无此用户名则 INSERT 注册；有则校验口令；want_admin 须与库中 is_admin 一致
   std::optional<std::string> authenticate_or_register(const std::string& username, const std::string& password,
                                                       bool want_admin, UserInfo& out);
   // 任用户名字 → id

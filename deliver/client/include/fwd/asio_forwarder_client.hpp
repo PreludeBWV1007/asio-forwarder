@@ -2,13 +2,17 @@
 
 // asio_forwarder 对外主用客户端 API（业务集成主入口）
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include <msgpack.hpp>
 
@@ -56,9 +60,17 @@ class LocalForwarder {
 class Client {
  public:
   Client() = default;
-  ~Client() = default;
+  ~Client();
+
   Client(const Client&) = delete;
   Client& operator=(const Client&) = delete;
+  Client(Client&&) = delete;
+  Client& operator=(Client&&) = delete;
+
+  /** 默认开启：登录成功后后台线程按固定间隔仅发送 HEARTBEAT（不写 socket 读端）；须在 sign_on 前调用。 */
+  void set_auto_heartbeat(bool enable);
+  /** 默认 20s；小于 1s 按 1s；须在 sign_on 前调用。 */
+  void set_auto_heartbeat_interval(std::chrono::seconds interval);
 
   void open(const ConnectionConfig& cfg);
   void sign_on(std::string_view username, std::string_view password, RecvMode recv_mode,
@@ -82,7 +94,8 @@ class Client {
 
   [[nodiscard]] sdk::Deliver recv_deliver();
 
-  [[nodiscard]] std::uint32_t control_list_users(bool wait_server_reply = true);
+  /** list_users CONTROL：wait 为 true 时返回 201 正文 unpack（含 users 等）；否则仅发出请求并返回 nullopt */
+  [[nodiscard]] std::optional<msgpack::object_handle> control_list_users(bool wait_server_reply = true);
   [[nodiscard]] std::uint32_t control_kick_user(std::uint64_t target_user_id, bool wait_server_reply = true);
 
   /** 管理员 CONTROL：body 为完整 msgpack map（须含 action）；返回服务端 201 正文的 unpack（含 ok/op 及自定义字段） */
@@ -96,6 +109,14 @@ class Client {
   std::string username_;
   std::deque<sdk::Event> in_order_;
   std::deque<sdk::Deliver> pre_delivers_;
+  std::thread hb_th_;
+  std::atomic<bool> hb_stop_{true};
+  bool auto_hb_enabled_{true};
+  std::chrono::seconds auto_hb_interval_{20};
+
+  void auto_heartbeat_loop_();
+  void start_auto_heartbeat_worker_();
+  void stop_auto_heartbeat_worker_();
   void drain_server_ack(std::uint32_t seq, const char* op);
   sdk::ServerReply drain_control_full(std::uint32_t seq);
   void expect_heartbeat_ok(std::uint32_t seq);

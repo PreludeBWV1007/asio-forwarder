@@ -1,15 +1,13 @@
 /home/xuanrui/asio-forwarder/build/CMakeFiles/asio_forwarder.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/asio_forwarder_sdk.dir
-/home/xuanrui/asio-forwarder/build/CMakeFiles/forwarder_perf.dir
-/home/xuanrui/asio-forwarder/build/CMakeFiles/usage_instruction.dir
-/home/xuanrui/asio-forwarder/build/CMakeFiles/test.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/test_admin.dir
+/home/xuanrui/asio-forwarder/build/CMakeFiles/test_user.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/edit_cache.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/rebuild_cache.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/list_install_components.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/install.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/install/local.dir
 /home/xuanrui/asio-forwarder/build/CMakeFiles/install/strip.dir
-/home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/CMakeFiles/test.dir
 /home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/CMakeFiles/edit_cache.dir
 /home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/CMakeFiles/rebuild_cache.dir
 /home/xuanrui/asio-forwarder/build/_deps/msgpack_c-build/CMakeFiles/list_install_components.dir

@@ -1,4 +1,4 @@
--- E2E 测试数据（与 e2e_forwarder.py 用户名一致）
+-- 本地联调种子数据（与 local/tests/test_admin.cpp 所用账号一致，可扩展）
 INSERT IGNORE INTO ip_allowlist (ip) VALUES ('127.0.0.1'), ('::1');
 
 INSERT INTO users (username, password, is_admin) VALUES

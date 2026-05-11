@@ -63,6 +63,6 @@ set(CMAKE_MAKEFILE_PRODUCTS
 set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/asio_forwarder.dir/DependInfo.cmake"
   "CMakeFiles/asio_forwarder_sdk.dir/DependInfo.cmake"
-  "CMakeFiles/forwarder_perf.dir/DependInfo.cmake"
-  "CMakeFiles/usage_instruction.dir/DependInfo.cmake"
+  "CMakeFiles/test_admin.dir/DependInfo.cmake"
+  "CMakeFiles/test_user.dir/DependInfo.cmake"
   )

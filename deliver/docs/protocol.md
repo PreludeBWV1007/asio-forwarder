@@ -66,7 +66,7 @@
 仅**管理类账号**可用。正文为 msgpack map，至少含 **`action`**（字符串）。常见取值包括：
 
 - **在线**：`list_users`、`kick_user`（参数以服务端实现为准）。
-- **库表**（`ip_allowlist` / `users`）：`allowlist_list`、`allowlist_add`（`ip`）、`allowlist_update`（`id`、`ip`）、`allowlist_delete`（`id`）；`user_table_list`、`user_table_add`（`username`、`password`、`is_admin`）、`user_table_update`（`id` 及可选字段）、`user_table_delete`（`id`）。具体键名与回复结构以实现与 **`usage_instruction`** 示例为准。
+- **库表**（`ip_allowlist` / `users`）：`allowlist_list`、`allowlist_add`（`ip`）、`allowlist_update`（`id`、`ip`）、`allowlist_delete`（`id`）；`user_table_list`、`user_table_add`（`username`、`password`、`is_admin`）、`user_table_update`（`id` 及可选字段）、`user_table_delete`（`id`）。具体键名与回复结构以实现与 **`local/tests/test_admin.cpp`** 中 `control_request` 用法为准。
 
 ## 服务器下行
 

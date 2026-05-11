@@ -1,6 +1,7 @@
 {
   "code-runner.runInTerminal": true,
   "code-runner.executorMapByGlob": {
-    "usage_instruction.cpp": "cd \"$dir/../../..\" && (cmake --build build --target usage_instruction -j || ./scripts/build.sh) && ./build/usage_instruction 127.0.0.1 19000 19003"
+    "test_admin.cpp": "cd \"$dir/../../..\" && (cmake --build build --target test_admin -j || ./scripts/build.sh) && ./build/test_admin 127.0.0.1 19000",
+    "test_user.cpp": "cd \"$dir/../../..\" && (cmake --build build --target test_user -j || ./scripts/build.sh) && ./build/test_user 127.0.0.1 19000"
   }
 }

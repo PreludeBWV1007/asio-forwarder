@@ -10,7 +10,7 @@
 ```bash
 ./scripts/build.sh
 ```
-成功后会有 build/asio_forwarder、build/usage_instruction 及 SDK 静态库等。
+成功后会有 `build/asio_forwarder`、`build/test_admin`、`build/test_user` 及 SDK 静态库等。
 
 - `准备数据库`：在能连 MySQL 的前提下执行：
 ```bash
@@ -24,7 +24,7 @@ seed_e2e.sql 里有 e2e 账号、白名单等。
 ### 服务端
 - `业务TCP端口`：19000
 - `管理HTTP`：127.0.0.1:19003
-- `配置`：deliver/server/forwarder.json。需要保证mysql密码更新到JSON中最新
+- `配置`：deliver/server/forwarder.json。需要保证mysql密码更新到JSON中最新。
 
 ```bash
 ./build/asio_forwarder deliver/server/forwarder.json
@@ -34,9 +34,10 @@ seed_e2e.sql 里有 e2e 账号、白名单等。
 - `基础`：持有：头文件目录 **`deliver/client/include/fwd/`** + 静态库 **`libasio_forwarder_sdk.a`**
 - `使用`：功能汇总和实现详情见：[deliver/docs/usage.md](deliver/docs/usage.md)
 
-运行测试：
+运行集成小测（需已按上文导入 `local/tests/seed_e2e.sql` 且中继已启动）：
 ```bash
-./build/usage_instruction 127.0.0.1 19000 19003
+./build/test_admin 127.0.0.1 19000   # 管理员 CONTROL / 踢人 / 两表 CRUD
+./build/test_user 127.0.0.1 19000     # 普通用户 DATA 往返 / try_login / 非管理员禁止 CONTROL
 ```
 
 ### 本地Web端
@@ -54,23 +55,7 @@ PYTHONPATH=local/tools python3 local/tools/webui_server.py
 
 ### 性能测试
 
-- **端到端**（需本机 MySQL，脚本会建库 `forwarder_e2e` 并导入 `schema.sql` + `local/tests/seed_e2e.sql`）：
-
-  ```bash
-  cd build && ctest --output-on-failure
-  # 或
-  ./local/tests/run_e2e.sh
-  ```
-
-  通过时最后一行：`---- OK: e2e passed ----`。黑盒脚本已合并为 **`local/tests/e2e_forwarder.py`**。
-
-- **基本性能**（需已有中继与种子用户 `perf_src` / `perf_dst`）：
-
-  ```bash
-  ./build/forwarder_perf 127.0.0.1 业务端口 2000
-  ```
-
-  将终端输出填入 `deliver/docs/performance.md` 中表格。详见该文件。
+仓库内已不再附带自动化 E2E 脚本与 `forwarder_perf`；可自行编写客户端测往返或更新 `deliver/docs/performance.md` 中的记录方式。管理员能力联调见上一节 `test_admin`。
 
 ### 支持文档
 

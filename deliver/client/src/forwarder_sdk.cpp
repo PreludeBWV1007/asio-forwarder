@@ -8,10 +8,13 @@
 #include <msgpack.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #include "fwd/protocol.hpp"
 #include "fwd/relay_constants.hpp"
@@ -21,6 +24,7 @@ namespace fwd::sdk {
 using boost::asio::ip::tcp;
 
 struct RelayClient::Impl {
+  std::mutex write_mu;
   boost::asio::io_context io;
   tcp::resolver resolver{io};
   tcp::socket sock{io};
@@ -40,7 +44,7 @@ struct RelayClient::Impl {
     boost::asio::read(sock, boost::asio::buffer(data, n));
   }
 
-  void send_msgpack(std::uint32_t msg_type, std::uint32_t seq, const msgpack::sbuffer& buf) {
+  void emit_msgpack(std::uint32_t msg_type, std::uint32_t seq, const msgpack::sbuffer& buf) {
     proto::Header h{};
     h.msg_type = msg_type;
     h.seq = seq;
@@ -76,11 +80,13 @@ RelayClient::~RelayClient() {
 }
 
 void RelayClient::connect(const std::string& host, std::uint16_t port) {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   auto eps = impl_->resolver.resolve(host, std::to_string(port));
   boost::asio::connect(impl_->sock, eps);
 }
 
 void RelayClient::close() {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   if (!impl_->sock.is_open()) return;
   boost::system::error_code ec;
   impl_->sock.shutdown(tcp::socket::shutdown_both, ec);
@@ -89,6 +95,7 @@ void RelayClient::close() {
 
 std::uint32_t RelayClient::login(const std::string& username, const std::string& password, const std::string& peer_role,
                                  const std::string& recv_mode) {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
   msgpack::sbuffer buf;
   msgpack::packer<msgpack::sbuffer> pk(&buf);
@@ -101,20 +108,22 @@ std::uint32_t RelayClient::login(const std::string& username, const std::string&
   pk.pack(peer_role);
   pk.pack("recv_mode");
   pk.pack(recv_mode);
-  impl_->send_msgpack(relay::kClientLogin, s, buf);
+  impl_->emit_msgpack(relay::kClientLogin, s, buf);
   return s;
 }
 
 std::uint32_t RelayClient::heartbeat() {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
   msgpack::sbuffer buf;
   msgpack::packer<msgpack::sbuffer> pk(&buf);
   pk.pack_map(0);
-  impl_->send_msgpack(relay::kClientHeartbeat, s, buf);
+  impl_->emit_msgpack(relay::kClientHeartbeat, s, buf);
   return s;
 }
 
 std::uint32_t RelayClient::send_data(const std::string& dst_username, const std::string& payload) {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
   msgpack::sbuffer buf;
   msgpack::packer<msgpack::sbuffer> pk(&buf);
@@ -124,22 +133,24 @@ std::uint32_t RelayClient::send_data(const std::string& dst_username, const std:
   pk.pack("payload");
   pk.pack_bin(static_cast<std::uint32_t>(payload.size()));
   pk.pack_bin_body(payload.data(), static_cast<std::uint32_t>(payload.size()));
-  impl_->send_msgpack(relay::kClientData, s, buf);
+  impl_->emit_msgpack(relay::kClientData, s, buf);
   return s;
 }
 
 std::uint32_t RelayClient::control_list_users() {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
   msgpack::sbuffer buf;
   msgpack::packer<msgpack::sbuffer> pk(&buf);
   pk.pack_map(1);
   pk.pack("action");
   pk.pack("list_users");
-  impl_->send_msgpack(relay::kClientControl, s, buf);
+  impl_->emit_msgpack(relay::kClientControl, s, buf);
   return s;
 }
 
 std::uint32_t RelayClient::control_kick_user(std::uint64_t target_user_id) {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
   msgpack::sbuffer buf;
   msgpack::packer<msgpack::sbuffer> pk(&buf);
@@ -148,13 +159,14 @@ std::uint32_t RelayClient::control_kick_user(std::uint64_t target_user_id) {
   pk.pack("kick_user");
   pk.pack("target_user_id");
   pk.pack(target_user_id);
-  impl_->send_msgpack(relay::kClientControl, s, buf);
+  impl_->emit_msgpack(relay::kClientControl, s, buf);
   return s;
 }
 
 std::uint32_t RelayClient::control_send_raw(const msgpack::sbuffer& body) {
+  const std::lock_guard<std::mutex> lk(impl_->write_mu);
   const std::uint32_t s = impl_->next_seq();
-  impl_->send_msgpack(relay::kClientControl, s, body);
+  impl_->emit_msgpack(relay::kClientControl, s, body);
   return s;
 }
 
@@ -452,6 +464,42 @@ bool admin_health_ok(std::string_view host, std::uint16_t admin_http_port) {
 
 void Client::open(const ConnectionConfig& cfg) { client_.connect(cfg.host, cfg.port); }
 
+Client::~Client() { stop_auto_heartbeat_worker_(); }
+
+void Client::set_auto_heartbeat(bool enable) { auto_hb_enabled_ = enable; }
+
+void Client::set_auto_heartbeat_interval(std::chrono::seconds interval) {
+  auto_hb_interval_ = interval.count() < 1 ? std::chrono::seconds(1) : interval;
+}
+
+void Client::start_auto_heartbeat_worker_() {
+  if (!auto_hb_enabled_) return;
+  if (hb_th_.joinable()) return;
+  hb_stop_.store(false, std::memory_order_relaxed);
+  hb_th_ = std::thread([this] { auto_heartbeat_loop_(); });
+}
+
+void Client::stop_auto_heartbeat_worker_() {
+  hb_stop_.store(true, std::memory_order_relaxed);
+  if (hb_th_.joinable()) hb_th_.join();
+}
+
+void Client::auto_heartbeat_loop_() {
+  using namespace std::chrono_literals;
+  for (;;) {
+    if (hb_stop_.load(std::memory_order_relaxed)) return;
+    for (std::int64_t sec = 0; sec < auto_hb_interval_.count(); ++sec) {
+      if (hb_stop_.load(std::memory_order_relaxed)) return;
+      std::this_thread::sleep_for(1s);
+    }
+    try {
+      client_.heartbeat();
+    } catch (...) {
+      break;
+    }
+  }
+}
+
 void Client::sign_on(std::string_view username, std::string_view password, RecvMode recv_mode, std::string_view peer_role) {
   username_ = std::string(username);
   const std::string rms(recv_mode_str(recv_mode));
@@ -471,10 +519,16 @@ void Client::sign_on(std::string_view username, std::string_view password, RecvM
       throw std::runtime_error("sign_on: 登录阶段不应收到 DELIVER");
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
+      if (r->ok && r->op == "HEARTBEAT") {
+        continue;
+      }
       if (!r->ok) {
         throw std::runtime_error("sign_on: " + (r->message.empty() ? "error" : r->message));
       }
-      if (r->op == "LOGIN") return;
+      if (r->op == "LOGIN") {
+        start_auto_heartbeat_worker_();
+        return;
+      }
       throw std::runtime_error("sign_on: 未预期的 201: op=" + r->op);
     }
   }
@@ -499,6 +553,9 @@ void Client::drain_server_ack(std::uint32_t seq, const char* op) {
       continue;
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
+      if (r->ok && r->op == "HEARTBEAT") {
+        continue;
+      }
       if (r->seq == seq) {
         // 成功应答均带 op；仅 ok:false 的 err 应答（见 send_err_reply）通常不含 op
         if (!r->ok) {
@@ -531,6 +588,9 @@ fwd::sdk::ServerReply Client::drain_control_full(std::uint32_t seq) {
       continue;
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
+      if (r->ok && r->op == "HEARTBEAT") {
+        continue;
+      }
       if (r->seq != seq) {
         throw std::runtime_error("CONTROL: 未预期的 201 seq=" + std::to_string(r->seq));
       }
@@ -568,7 +628,10 @@ void Client::expect_heartbeat_ok(std::uint32_t seq) {
       continue;
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
-      if (r->seq == seq && r->op == "HEARTBEAT" && r->ok) return;
+      if (r->ok && r->op == "HEARTBEAT") {
+        if (r->seq == seq) return;
+        continue;
+      }
       throw std::runtime_error("heartbeat: 对 HEARTBEAT 先收到不匹配的 201: seq=" + std::to_string(r->seq) + " op=" + r->op);
     }
   }
@@ -616,7 +679,9 @@ fwd::sdk::Deliver Client::recv_deliver() {
       return *d;
     }
     if (const auto* r = std::get_if<fwd::sdk::ServerReply>(&e)) {
-      (void)r;
+      if (r->ok && r->op == "HEARTBEAT") {
+        continue;
+      }
       throw std::runtime_error("recv_deliver: 在收到 200 之前收到 201（多线程/调用顺序不合法，或需先 drain 对端应答）");
     }
   }
@@ -627,10 +692,11 @@ void Client::heartbeat() {
   expect_heartbeat_ok(seq);
 }
 
-std::uint32_t Client::control_list_users(bool wait_server_reply) {
+std::optional<msgpack::object_handle> Client::control_list_users(bool wait_server_reply) {
   const std::uint32_t seq = client_.control_list_users();
-  if (wait_server_reply) drain_server_ack(seq, "CONTROL");
-  return seq;
+  if (!wait_server_reply) return std::nullopt;
+  const auto rep = drain_control_full(seq);
+  return msgpack::unpack(rep.body_raw.data(), rep.body_raw.size());
 }
 
 std::uint32_t Client::control_kick_user(std::uint64_t target_user_id, bool wait_server_reply) {

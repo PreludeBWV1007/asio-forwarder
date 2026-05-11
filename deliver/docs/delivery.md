@@ -17,7 +17,7 @@
 | `deliver/client/src/forwarder_sdk.cpp` | **唯一客户端库源文件**（同步 Relay + 高层 Client） |
 | `build/asio_forwarder` | 服务端可执行文件 |
 | `build/libasio_forwarder_sdk.a` | 客户端静态库 |
-| `build/usage_instruction` | 合一入门示例（DATA / typed、两种 `RecvMode`、管理员 CONTROL 含库表 CRUD） |
+| `build/test_admin` | 管理员能力联调可执行（`local/tests/test_admin.cpp`：CONTROL、`list_users`、`kick_user` 等） |
 
 ---
 
@@ -135,7 +135,7 @@
 
 **`local/tools/webui_server.py` + 单页**：浏览器左侧监控里，一部分是 **GET** 代理到 C++ 的只读管理口（`/api/health` 等），另一部分是 **FastAPI 进程自己用 pymysql 连库**，对自己暴露了 `/api/ops/whitelist`、`/api/ops/accounts` 等 **增删改查**——**这些事没有走 `asio_forwarder` 进程**，也不校验你是不是业务里的 `is_admin` 用户，靠的是 **你给 Web 服务配的 MySQL 账号** 以及网络隔离（本应只在内网开）。
 
-**业务 TCP 上的管理员账号**（`users.is_admin`）：除 **`list_users` / `kick_user`** 外，还可通过 CONTROL 对 **`ip_allowlist`**、**`users`** 做 **增删改查**（`action` 形如 `allowlist_*`、`user_table_*`，详见 **§8.1** 与示例 **`usage_instruction`**）。权限与口令以库里为准；删除用户会先踢掉其在线会话。
+**业务 TCP 上的管理员账号**（`users.is_admin`）：除 **`list_users` / `kick_user`** 外，还可通过 CONTROL 对 **`ip_allowlist`**、**`users`** 做 **增删改查**（`action` 形如 `allowlist_*`、`user_table_*`，详见 **§8.1** 与 **`local/tests/test_admin.cpp`**）。权限与口令以库里为准；删除用户会先踢掉其在线会话。
 
 **真实交付场景**仍可几种拆法（按安全需求选）：
 
@@ -159,7 +159,7 @@
 登录：**先**白名单 **再** 账号；若用户名不存在则**自动插入**后登录（仍须过白名单）。
 
 - **LOGIN 里的 `peer_role`**：须为 `user` 或 `admin`，且与库中 **`users.is_admin`** 一致（管理员账号必须用 `admin`，否则返回「登录所选权限与账号不一致」）。
-- **`recv_mode`（Broadcast / RoundRobin）**：同一 **`username` 在该中继进程内「首次成功登录」**时选定后，后续再登录的同名连接沿用该策略（可与 `usage_instruction` 中 **Broadcast 用 e2e_bob、RoundRobin 演示用种子用户 `rr2_*`** 对照阅读；数据见 `local/tests/seed_e2e.sql`）。
+- **`recv_mode`（Broadcast / RoundRobin）**：同一 **`username` 在该中继进程内「首次成功登录」**时选定后，后续再登录的同名连接沿用该策略（种子用户见 `local/tests/seed_e2e.sql`，如 `e2e_bob`、`rr2_*` 等）。
 
 ---
 
@@ -172,12 +172,13 @@
 
 | 类型 / 函数 | 作用 |
 |-------------|------|
-| `Client` | 一条 TCP：**open** → **sign_on**（阻塞直到 LOGIN 成功或异常）→ **send** / **recv_deliver** / **heartbeat** / **control_*** |
+| `Client` | 一条 TCP：**open** → **sign_on**（阻塞直到 LOGIN 成功或异常）→ **send** / **recv_deliver** / **heartbeat** / **control_***；默认在 **sign_on** 成功后由后台线程每 **20s** 发送 HEARTBEAT（可用 **`set_auto_heartbeat`** / **`set_auto_heartbeat_interval`** 在 **sign_on** 前关闭或改间隔） |
+| `Client::set_auto_heartbeat` / `set_auto_heartbeat_interval` | 须在 **sign_on** 前调用；后台仅发出 HEARTBEAT 帧（**不**读 socket），与业务线程并发写路径已加锁；显式 **`heartbeat()`** 仍可用 |
 | `Client::ConnectionConfig` | `host` + `port` |
 | `RecvMode` | `Broadcast` / `RoundRobin`（与登录时字符串 `broadcast` / `round_robin` 对应） |
 | `Client::send(target_username, payload_bytes, SendOptions)` | 发 DATA；默认 **`wait_server_accept=true`** 会在发完后读掉对应 **201**；若设为 `false`，须自行保证 **201** 在后续 **`recv_deliver`** 之前被消费，否则会误把 201 当投递读入 |
 | `Client::recv_deliver()` | 阻塞收一条 200 投递 |
-| `Client::control_list_users` / `control_kick_user` | 管理命令（需管理员账号） |
+| `Client::control_list_users`（`wait==true` 时返回 201 正文 `optional<object_handle>`，含 `users`）/ `control_kick_user` | 管理命令（需管理员账号） |
 | `Client::control_request` | 发任意 CONTROL msgpack map，收 201 解析用（库表 CRUD 等） |
 | `try_login(...)` | 仅探测登录是否成功 |
 | `LocalForwarder` | **Linux 联调用**：fork 子进程跑 `asio_forwarder` 临时配置（可选） |
@@ -201,8 +202,8 @@
 
 ## 6. 可选交付物
 
-- **`local/tools/`**：Python 线缆工具、**Web 单页**（监控 + 模拟终端）、`e2e_forwarder.py` 等。  
-- **样例**：`local/examples/usage_instruction.cpp` → **`usage_instruction`**（多 API、`RecvMode` 对照、管理员库表 CRUD）；性能小工具见 `local/tests/perf_basic.cpp`（`forwarder_perf`）。
+- **`local/tools/`**：Python 线缆工具、**Web 单页**（监控 + 模拟终端）等。  
+- **联调可执行**：`local/tests/test_admin.cpp` → **`test_admin`**（管理员 CONTROL、`list_users` / `kick_user` 演示）。
 
 ---
 
@@ -240,16 +241,11 @@
 | `Client::send_poly` / `send_typed` | 在载荷外再包 msgpack（kind/type/data 或 type/data），仍走 DATA 路由 |
 | `Client::recv_deliver` | 阻塞收一条发往本连接的投递（200） |
 | `Client::heartbeat` | 发 HEARTBEAT，配合服务端超时配置 |
-| `Client::control_list_users` / `control_kick_user` | 管理员：列出用户、按 user id 踢 |
+| `Client::control_list_users` / `control_kick_user` | 管理员：列出在线用户与连接（201 正文）、按 user id 踢 |
 | `Client::control_request` | 发任意 CONTROL msgpack map（如库表 CRUD），收 201 后解析正文 |
 | `Client::raw` | 访问 `sdk::RelayClient`：**connect/login/send_data/recv** 等更低层 |
 | `try_login` | 短连接探测账号是否可登录 |
 | `admin_health_ok` | HTTP GET 探测管理口 |
 | `LocalForwarder` | （Linux）fork 子进程起临时中继，多用于自测 |
 
-带注释的合一示例：`local/examples/usage_instruction.cpp` → **`usage_instruction`**（含 **`try_login`**、二进制 / typed / poly DATA、同一目标用户两条连接对比 **`RecvMode::Broadcast` 与 `RoundRobin`**、管理员 **`list_users` 与库表 CRUD**）。
-
-### 8.3 与 `perf_basic.cpp` 的关系
-
-`local/tests/perf_basic.cpp` 侧重**测往返耗时**（`perf_src` / `perf_dst`、循环 RTT）。  
-**`usage_instruction`** 覆盖**集成方常用 API** 与管理 CONTROL（含改 **`ip_allowlist` / `users`**）。
+管理员与库表 CONTROL 的用法示例见 **`local/tests/test_admin.cpp`**（`test_admin` 可执行文件）。

@@ -65,16 +65,6 @@ CMAKE_BINARY_DIR = /home/xuanrui/asio-forwarder/build
 #=============================================================================
 # Targets provided globally by CMake.
 
-# Special rule for the target test
-test:
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "Running tests..."
-	/usr/local/lib/python3.10/dist-packages/cmake/data/bin/ctest --force-new-ctest-process $(ARGS)
-.PHONY : test
-
-# Special rule for the target test
-test/fast: test
-.PHONY : test/fast
-
 # Special rule for the target edit_cache
 edit_cache:
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --cyan "No interactive CMake dialog available..."
@@ -198,30 +188,30 @@ asio_forwarder_sdk/fast:
 .PHONY : asio_forwarder_sdk/fast
 
 #=============================================================================
-# Target rules for targets named forwarder_perf
+# Target rules for targets named test_admin
 
 # Build rule for target.
-forwarder_perf: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 forwarder_perf
-.PHONY : forwarder_perf
+test_admin: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_admin
+.PHONY : test_admin
 
 # fast build rule for target.
-forwarder_perf/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_perf.dir/build.make CMakeFiles/forwarder_perf.dir/build
-.PHONY : forwarder_perf/fast
+test_admin/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_admin.dir/build.make CMakeFiles/test_admin.dir/build
+.PHONY : test_admin/fast
 
 #=============================================================================
-# Target rules for targets named usage_instruction
+# Target rules for targets named test_user
 
 # Build rule for target.
-usage_instruction: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 usage_instruction
-.PHONY : usage_instruction
+test_user: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 test_user
+.PHONY : test_user
 
 # fast build rule for target.
-usage_instruction/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/build
-.PHONY : usage_instruction/fast
+test_user/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_user.dir/build.make CMakeFiles/test_user.dir/build
+.PHONY : test_user/fast
 
 deliver/client/src/forwarder_sdk.o: deliver/client/src/forwarder_sdk.cpp.o
 .PHONY : deliver/client/src/forwarder_sdk.o
@@ -271,53 +261,53 @@ deliver/server/src/main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/asio_forwarder.dir/build.make CMakeFiles/asio_forwarder.dir/deliver/server/src/main.cpp.s
 .PHONY : deliver/server/src/main.cpp.s
 
-local/examples/usage_instruction.o: local/examples/usage_instruction.cpp.o
-.PHONY : local/examples/usage_instruction.o
+local/tests/test_admin.o: local/tests/test_admin.cpp.o
+.PHONY : local/tests/test_admin.o
 
 # target to build an object file
-local/examples/usage_instruction.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.o
-.PHONY : local/examples/usage_instruction.cpp.o
+local/tests/test_admin.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_admin.dir/build.make CMakeFiles/test_admin.dir/local/tests/test_admin.cpp.o
+.PHONY : local/tests/test_admin.cpp.o
 
-local/examples/usage_instruction.i: local/examples/usage_instruction.cpp.i
-.PHONY : local/examples/usage_instruction.i
+local/tests/test_admin.i: local/tests/test_admin.cpp.i
+.PHONY : local/tests/test_admin.i
 
 # target to preprocess a source file
-local/examples/usage_instruction.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.i
-.PHONY : local/examples/usage_instruction.cpp.i
+local/tests/test_admin.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_admin.dir/build.make CMakeFiles/test_admin.dir/local/tests/test_admin.cpp.i
+.PHONY : local/tests/test_admin.cpp.i
 
-local/examples/usage_instruction.s: local/examples/usage_instruction.cpp.s
-.PHONY : local/examples/usage_instruction.s
+local/tests/test_admin.s: local/tests/test_admin.cpp.s
+.PHONY : local/tests/test_admin.s
 
 # target to generate assembly for a file
-local/examples/usage_instruction.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/usage_instruction.dir/build.make CMakeFiles/usage_instruction.dir/local/examples/usage_instruction.cpp.s
-.PHONY : local/examples/usage_instruction.cpp.s
+local/tests/test_admin.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_admin.dir/build.make CMakeFiles/test_admin.dir/local/tests/test_admin.cpp.s
+.PHONY : local/tests/test_admin.cpp.s
 
-local/tests/perf_basic.o: local/tests/perf_basic.cpp.o
-.PHONY : local/tests/perf_basic.o
+local/tests/test_user.o: local/tests/test_user.cpp.o
+.PHONY : local/tests/test_user.o
 
 # target to build an object file
-local/tests/perf_basic.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_perf.dir/build.make CMakeFiles/forwarder_perf.dir/local/tests/perf_basic.cpp.o
-.PHONY : local/tests/perf_basic.cpp.o
+local/tests/test_user.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_user.dir/build.make CMakeFiles/test_user.dir/local/tests/test_user.cpp.o
+.PHONY : local/tests/test_user.cpp.o
 
-local/tests/perf_basic.i: local/tests/perf_basic.cpp.i
-.PHONY : local/tests/perf_basic.i
+local/tests/test_user.i: local/tests/test_user.cpp.i
+.PHONY : local/tests/test_user.i
 
 # target to preprocess a source file
-local/tests/perf_basic.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_perf.dir/build.make CMakeFiles/forwarder_perf.dir/local/tests/perf_basic.cpp.i
-.PHONY : local/tests/perf_basic.cpp.i
+local/tests/test_user.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_user.dir/build.make CMakeFiles/test_user.dir/local/tests/test_user.cpp.i
+.PHONY : local/tests/test_user.cpp.i
 
-local/tests/perf_basic.s: local/tests/perf_basic.cpp.s
-.PHONY : local/tests/perf_basic.s
+local/tests/test_user.s: local/tests/test_user.cpp.s
+.PHONY : local/tests/test_user.s
 
 # target to generate assembly for a file
-local/tests/perf_basic.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/forwarder_perf.dir/build.make CMakeFiles/forwarder_perf.dir/local/tests/perf_basic.cpp.s
-.PHONY : local/tests/perf_basic.cpp.s
+local/tests/test_user.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/test_user.dir/build.make CMakeFiles/test_user.dir/local/tests/test_user.cpp.s
+.PHONY : local/tests/test_user.cpp.s
 
 # Help Target
 help:
@@ -331,23 +321,22 @@ help:
 	@echo "... install/strip"
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
-	@echo "... test"
 	@echo "... asio_forwarder"
 	@echo "... asio_forwarder_sdk"
-	@echo "... forwarder_perf"
-	@echo "... usage_instruction"
+	@echo "... test_admin"
+	@echo "... test_user"
 	@echo "... deliver/client/src/forwarder_sdk.o"
 	@echo "... deliver/client/src/forwarder_sdk.i"
 	@echo "... deliver/client/src/forwarder_sdk.s"
 	@echo "... deliver/server/src/main.o"
 	@echo "... deliver/server/src/main.i"
 	@echo "... deliver/server/src/main.s"
-	@echo "... local/examples/usage_instruction.o"
-	@echo "... local/examples/usage_instruction.i"
-	@echo "... local/examples/usage_instruction.s"
-	@echo "... local/tests/perf_basic.o"
-	@echo "... local/tests/perf_basic.i"
-	@echo "... local/tests/perf_basic.s"
+	@echo "... local/tests/test_admin.o"
+	@echo "... local/tests/test_admin.i"
+	@echo "... local/tests/test_admin.s"
+	@echo "... local/tests/test_user.o"
+	@echo "... local/tests/test_user.i"
+	@echo "... local/tests/test_user.s"
 .PHONY : help
 
 
