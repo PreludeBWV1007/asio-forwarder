@@ -25,7 +25,7 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from relay_client import RelayClient, Deliver, KickNotice, ServerReply
@@ -138,6 +138,16 @@ def _mysql_from_env() -> Optional[dict]:
 
 
 app = FastAPI()
+
+# Chrome 等浏览器会自动请求 /favicon.ico；无路由时控制台出现 404 噪音。
+_FAVICON_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(content=_FAVICON_PNG, media_type="image/png")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -391,7 +401,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
     try:
         while True:
             raw = await ws.receive_text()
-            msg = json.loads(raw)
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError as e:
+                emit({"type": "error", "ts_ms": _now_ms(), "msg": f"invalid JSON: {e!r}"})
+                continue
+            if not isinstance(msg, dict):
+                emit({"type": "error", "ts_ms": _now_ms(), "msg": "message must be a JSON object"})
+                continue
             op = str(msg.get("op", ""))
             print(f"[webui] ws recv peer={peer} op={op} msg={msg}", flush=True)
 
@@ -400,15 +417,32 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     rc.close()
                     rc = None
                 host = str(msg.get("host", "127.0.0.1"))
-                port = int(msg.get("port", 19000))
+                try:
+                    port = int(msg.get("port", 19000))
+                except (TypeError, ValueError):
+                    emit({"type": "error", "ts_ms": _now_ms(), "msg": f"无效端口: {msg.get('port')!r}"})
+                    continue
                 hb = msg.get("hb_interval_s", 5.0)
-                hb_interval_s = None if hb in (None, "off", 0, "0") else float(hb)
+                hb_interval_s = None
+                if hb not in (None, "off", 0, "0"):
+                    try:
+                        hb_interval_s = float(hb)
+                    except (TypeError, ValueError):
+                        emit({"type": "error", "ts_ms": _now_ms(), "msg": f"无效的心跳间隔 hb_interval_s: {hb!r}"})
+                        continue
                 rc = RelayClient(host, port, hb_interval_s=hb_interval_s)
                 rc.on_deliver = on_deliver
                 rc.on_reply = on_reply
                 rc.on_kick = on_kick
                 rc.on_closed = on_closed
-                rc.connect()
+                try:
+                    # connect() 内含阻塞 TCP；勿卡住 asyncio 事件循环（否则其它会话与管理口代理一并卡住）
+                    await asyncio.to_thread(rc.connect)
+                except Exception as e:
+                    emit({"type": "error", "ts_ms": _now_ms(), "msg": f"TCP 连接失败: {e!r}"})
+                    rc.close()
+                    rc = None
+                    continue
                 emit({"type": "info", "ts_ms": _now_ms(), "msg": f"connected to {host}:{port}"})
                 continue
 
@@ -486,6 +520,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
         except Exception:
             pass
         sender_task.cancel()
+        try:
+            await sender_task
+        except asyncio.CancelledError:
+            pass
         print(f"[webui] ws closed peer={peer}", flush=True)
 
 

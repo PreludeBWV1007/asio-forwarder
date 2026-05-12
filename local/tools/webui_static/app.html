@@ -518,7 +518,8 @@
             $("wlBody").querySelectorAll(".wdel").forEach((b) => {
               b.addEventListener("click", async function () {
                 if (!confirm("删除？")) return;
-                await fetch("/api/ops/whitelist/" + this.dataset.id, { method: "DELETE" });
+                const dr = await fetch("/api/ops/whitelist/" + this.dataset.id, { method: "DELETE" });
+                if (!dr.ok) alert(await dr.text());
                 loadWl();
               });
             });
@@ -552,7 +553,8 @@
             $("acBody").querySelectorAll(".acdel").forEach((b) => {
               b.addEventListener("click", async function () {
                 if (!confirm("删除？")) return;
-                await fetch("/api/ops/accounts/" + this.dataset.id, { method: "DELETE" });
+                const dr = await fetch("/api/ops/accounts/" + this.dataset.id, { method: "DELETE" });
+                if (!dr.ok) alert(await dr.text());
                 loadAc();
               });
             });
